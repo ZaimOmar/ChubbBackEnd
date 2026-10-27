@@ -1,0 +1,153 @@
+# Phase 1 local stack. `docker compose up --build` is the only command needed: configuration comes
+# from .env.example (dev-only values), optionally overridden by a git-ignored .env.
+# Finance is Phase 2 and deliberately absent. Claims, Reporting, Notification and Kafka are added
+# in their own slices (commented stubs at the bottom).
+
+name: chubb-claims
+
+# Secrets are NOT shared through an env_file: each service lists only the keys it needs below.
+# Values come from .env (git-ignored) or fall back to the dev-only defaults, which must be kept
+# in step with .env.example, so a clean clone starts with zero manual steps.
+x-hardening: &hardening
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  read_only: true
+  tmpfs:
+    - /tmp
+
+x-dotnet-healthcheck: &dotnet-healthcheck
+  # The aspnet runtime image has no curl/wget; bash /dev/tcp is enough to see an HTTP 200.
+  test:
+    - CMD
+    - bash
+    - -c
+    - >-
+      exec 3<>/dev/tcp/127.0.0.1/8080
+      && printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3
+      && head -n 1 <&3 | grep -q ' 200 '
+  interval: 5s
+  timeout: 3s
+  retries: 40
+  start_period: 10s
+
+services:
+  # One-shot: creates the RS256 pair only if absent (ADR-008 amendment). Private key goes to
+  # jwt-private (Identity only); public key to jwt-public (everyone who validates tokens).
+  jwt-keys:
+    image: alpine/openssl:3.5.4@sha256:42c7389ef077aed0eb4e96d0abbd094083d701bbaff1313073b061c0c9cd8278
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        if [ ! -f /jwt-private/private.pem ]; then
+          umask 077
+          openssl genrsa -out /jwt-private/private.pem 2048
+        fi
+        # Derived from the private key every run, so the pair can never diverge.
+        openssl rsa -in /jwt-private/private.pem -pubout -out /jwt-public/public.pem
+        # 1654 is the non-root "app" user of the .NET images. Re-applied every run so a
+        # half-finished earlier run cannot leave unreadable files.
+        chown 1654:1654 /jwt-private/private.pem
+        chmod 400 /jwt-private/private.pem
+        chmod 644 /jwt-public/public.pem
+    volumes:
+      - jwt-private:/jwt-private
+      - jwt-public:/jwt-public
+    restart: "no"
+
+  postgres:
+    image: postgres:16.10-alpine@sha256:029660641a0cfc575b14f336ba448fb8a75fd595d42e1fa316b9fb4378742297
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-dev-only-postgres-admin}
+      IDENTITY_DB_PASSWORD: ${IDENTITY_DB_PASSWORD:-dev-only-identity-db}
+      CLAIMS_DB_PASSWORD: ${CLAIMS_DB_PASSWORD:-dev-only-claims-db}
+      REPORTING_DB_PASSWORD: ${REPORTING_DB_PASSWORD:-dev-only-reporting-db}
+      NOTIFICATION_DB_PASSWORD: ${NOTIFICATION_DB_PASSWORD:-dev-only-notification-db}
+    networks: [data]
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 40
+    restart: unless-stopped
+    # No published port: only services on the compose network reach the database.
+
+  identity:
+    build:
+      context: .
+      dockerfile: src/Identity/Dockerfile
+    <<: *hardening
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      # Built from the same variable that creates the role, so the two cannot drift apart.
+      ConnectionStrings__IdentityDb: Host=postgres;Port=5432;Database=identity_db;Username=identity;Password=${IDENTITY_DB_PASSWORD:-dev-only-identity-db}
+      Identity__SeedPassword: ${Identity__SeedPassword:-Dev-Only-Passw0rd!}
+      Jwt__Issuer: ${Jwt__Issuer:-chubb-identity}
+      Jwt__Audience: ${Jwt__Audience:-chubb-claims-api}
+      Jwt__LifetimeMinutes: ${Jwt__LifetimeMinutes:-30}
+      Jwt__PrivateKeyPath: ${Jwt__PrivateKeyPath:-/run/jwt-private/private.pem}
+    networks: [edge, data]
+    depends_on:
+      jwt-keys:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    volumes:
+      - jwt-private:/run/jwt-private:ro
+    healthcheck: *dotnet-healthcheck
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: .
+      dockerfile: src/Gateway/Dockerfile
+    <<: *hardening
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      Jwt__Issuer: ${Jwt__Issuer:-chubb-identity}
+      Jwt__Audience: ${Jwt__Audience:-chubb-claims-api}
+      Jwt__PublicKeyPath: ${Jwt__PublicKeyPath:-/run/jwt-public/public.pem}
+      Cors__AllowedOrigins__0: ${Cors__AllowedOrigins__0:-http://localhost:4200}
+      OpenApi__ContractsPath: ${OpenApi__ContractsPath:-/app/contracts/openapi}
+      ReverseProxy__Clusters__identity__Destinations__primary__Address: ${ReverseProxy__Clusters__identity__Destinations__primary__Address:-http://identity:8080/}
+      ReverseProxy__Clusters__claims__Destinations__primary__Address: ${ReverseProxy__Clusters__claims__Destinations__primary__Address:-http://claims:8080/}
+      ReverseProxy__Clusters__reporting__Destinations__primary__Address: ${ReverseProxy__Clusters__reporting__Destinations__primary__Address:-http://reporting:8080/}
+      ReverseProxy__Clusters__notification__Destinations__primary__Address: ${ReverseProxy__Clusters__notification__Destinations__primary__Address:-http://notification:8080/}
+    networks: [edge]
+    depends_on:
+      jwt-keys:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    volumes:
+      - jwt-public:/run/jwt-public:ro
+    ports:
+      # The only published port; loopback only so the demo is not exposed on the LAN.
+      - "127.0.0.1:${GATEWAY_HOST_PORT:-8080}:8080"
+    healthcheck: *dotnet-healthcheck
+    restart: unless-stopped
+
+  # --- Added in their own slices (same pattern as identity: build, own `environment:` list with only
+  # the keys that service needs, networks, depends_on, healthcheck; never a shared env_file) ---
+  # kafka:           confluentinc/cp-kafka (pinned), KRaft single broker, healthcheck via kafka-topics
+  # kafka-init:      one-shot creating claims.events and claims.events.dlq (idempotent --if-not-exists)
+  # claims:          depends_on postgres, kafka-init; mounts jwt-public:ro
+  # reporting:       depends_on postgres, kafka-init; mounts jwt-public:ro
+  # notification:    depends_on postgres, kafka-init; mounts jwt-public:ro
+  # kafka-ui:        optional demo container, pinned, behind a compose profile
+
+networks:
+  edge:           # gateway <-> services it proxies to
+  data:           # services <-> postgres; no route out and the gateway is not on it
+    internal: true
+
+volumes:
+  jwt-private:
+  jwt-public:
+  postgres-data:

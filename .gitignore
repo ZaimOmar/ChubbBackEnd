@@ -1,0 +1,18 @@
+# Real configuration and dev key material: never committed (.env.example is the template)
+.env
+.env.*
+!.env.example
+.dev-keys/
+*.pem
+*.key
+
+# .NET build output
+bin/
+obj/
+TestResults/
+*.user
+.vs/
+.idea/
+
+# Tool output
+.gitleaks-report.json
