@@ -1,0 +1,19 @@
+# Keep the build context small and free of secrets. Compose builds from the repo root.
+.git
+.github
+.claude
+.env
+.env.*
+.dev-keys
+*.pem
+*.key
+**/bin
+**/obj
+**/TestResults
+tests
+docs
+scripts
+docker
+*.md
+.vs
+.idea
