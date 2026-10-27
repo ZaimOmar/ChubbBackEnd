@@ -6,7 +6,7 @@ Scope: the claim progress trail first; everything else minimal. Amounts are in t
 |---|---|
 | Claim | A request by a policyholder for the insurer to pay for a loss under a policy. Motor or Property. Has one lifecycle status at a time. |
 | First notice of loss (FNOL) | The first report of the incident. In this system: claim submission, creating status `Submitted` and the first trail entry. |
-| Claimant | The policyholder (or their nominee) who reports and tracks a claim. Sees only their own claims. |
+| Claimant | The policyholder (or their nominee) who reports and tracks a claim. Sees only their own claims. A claimant account never also holds a staff role (BR-78); a staff member who is a policyholder uses a separate claimant account. |
 | Officer (claims officer) | Staff member who picks up, assesses and decides claims. Owns a claim while assigned. |
 | Manager (claims manager) | Staff member who monitors workload, outstanding claims and exposure; can reassign claims; is the only role that can act as checker on decisions and settlements (BR-31). Does not propose decisions. |
 | Policy | The insurance contract against which a claim is made: policy number, market, status, coverage limit. Seeded, fictitious data only. |

@@ -43,7 +43,7 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 - [ ] [COULD][P2] Security tests S17 to S31 (Finance and settlement) written alongside Phase 2 - US-32 to 45, 48; BR-42 to BR-72
 
 ## 3. Identity and Gateway
-- [ ] [MUST][P1] Identity: seeded users per role plus one user holding Officer AND Manager (demos BR-32), dev login issuing RS256 JWT - US-23; BR-02, BR-32
+- [ ] [MUST][P1] Identity: seeded users per role (incl. a second claimant and a second officer for S2, S4, S10) plus one user holding Officer AND Manager (demos BR-32), dev login issuing RS256 JWT - US-23; BR-02, BR-32
 - [ ] [MUST][P1] Gateway (YARP): routes for Identity, Claims, Reporting, Notification; JWT validation (signature, issuer, audience, expiry), CORS - US-23, 20; BR-02
 - [ ] [MUST][P1] Aggregated OpenAPI from the Gateway for frontend client generation - US-25 (ADR-003)
 - [ ] [SHOULD][P1] CorrelationId propagated across HTTP and Kafka headers and written to trail entries - US-18; BR-05
