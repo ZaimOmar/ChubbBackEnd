@@ -42,6 +42,7 @@ app.UseAuthorization();
 
 app.MapHealthChecks("/health/live").AllowAnonymous();
 app.MapHealthChecks("/health/ready").AllowAnonymous();
+app.MapPayeeDetailsNotImplemented();
 app.MapReverseProxy();
 app.MapFallback("{**path}", () => Results.NotFound()).AllowAnonymous();
 

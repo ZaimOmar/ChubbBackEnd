@@ -21,6 +21,58 @@ public sealed class GatewayEdgeTests : GatewayTestBase
     }
 
     [Fact]
+    public async Task Gateway_Preflight_AllowsConcurrencyAndIdempotencyHeaders()
+    {
+        var request = Preflight("/claims/123/decision", "PUT", GatewayFactory.AllowedOrigin);
+        request.Headers.Remove("Access-Control-Request-Headers");
+        request.Headers.Add("Access-Control-Request-Headers", "authorization,if-match,idempotency-key");
+
+        var response = await Client.SendAsync(request);
+
+        response.Headers.GetValues("Access-Control-Allow-Headers").Single().ToLowerInvariant()
+            .Should().Contain("if-match").And.Contain("idempotency-key");
+        Downstream.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Gateway_Response_ExposesEtagAndReplayHeadersToTheFrontend()
+    {
+        var request = Request(HttpMethod.Get, "/claims/1", TestTokens.Create(Keys.SigningKey));
+        request.Headers.Add("Origin", GatewayFactory.AllowedOrigin);
+
+        var response = await Client.SendAsync(request);
+
+        response.Headers.GetValues("Access-Control-Expose-Headers").Single()
+            .Should().Contain("ETag").And.Contain("Idempotent-Replayed").And.Contain("Retry-After").And.Contain("Location")
+            .And.Contain(HeaderNames.CorrelationId);
+    }
+
+    [Theory]
+    [InlineData("GET")]
+    [InlineData("PUT")]
+    [InlineData("POST")]
+    [InlineData("DELETE")]
+    public async Task Gateway_PayeeDetails_Authenticated_Returns501AndNeverReachesClaims(string method)
+    {
+        var request = Request(new HttpMethod(method), "/claims/123/payee-details", TestTokens.Create(Keys.SigningKey));
+
+        var response = await Client.SendAsync(request);
+
+        response.StatusCode.Should().Be(HttpStatusCode.NotImplemented);
+        (await ProblemType(response)).Should().Be("not-implemented");
+        Downstream.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
+    public async Task Gateway_PayeeDetails_WithoutToken_Returns401AndNeverReachesClaims()
+    {
+        var response = await Client.GetAsync("/claims/123/payee-details");
+
+        response.StatusCode.Should().Be(HttpStatusCode.Unauthorized);
+        Downstream.Requests.Should().BeEmpty();
+    }
+
+    [Fact]
     public async Task Gateway_Preflight_OtherOrigin_ReturnsNoCorsHeaders()
     {
         var response = await Client.SendAsync(Preflight("/claims/123", "GET", "https://evil.example"));

@@ -11,7 +11,10 @@ public static class CorsSetup
     private static readonly string[] AllowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
 
     private static readonly string[] AllowedHeaders =
-        ["Authorization", "Content-Type", HeaderNames.IdempotencyKey, HeaderNames.CorrelationId];
+        ["Authorization", "Content-Type", "If-Match", HeaderNames.IdempotencyKey, HeaderNames.CorrelationId];
+
+    private static readonly string[] ExposedHeaders =
+        [HeaderNames.CorrelationId, "ETag", HeaderNames.IdempotentReplayed, "Retry-After", "Location"];
 
     public static IServiceCollection AddFrontendCors(this IServiceCollection services)
     {
@@ -28,7 +31,7 @@ public static class CorsSetup
                 .WithOrigins(settings.Value.AllowedOrigins)
                 .WithMethods(AllowedMethods)
                 .WithHeaders(AllowedHeaders)
-                .WithExposedHeaders(HeaderNames.CorrelationId)));
+                .WithExposedHeaders(ExposedHeaders)));
         return services;
     }
 

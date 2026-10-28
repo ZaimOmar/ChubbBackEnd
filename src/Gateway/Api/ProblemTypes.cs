@@ -10,6 +10,7 @@ public static class ProblemTypes
         [StatusCodes.Status404NotFound] = ("not-found", "The resource was not found."),
         [StatusCodes.Status413PayloadTooLarge] = ("payload-too-large", "The request body is too large."),
         [StatusCodes.Status500InternalServerError] = ("internal-error", "An unexpected error occurred."),
+        [StatusCodes.Status501NotImplemented] = ("not-implemented", "This capability is not available yet."),
         [StatusCodes.Status502BadGateway] = ("upstream-unavailable", "The upstream service is unavailable."),
         [StatusCodes.Status503ServiceUnavailable] = ("upstream-unavailable", "The upstream service is unavailable."),
         [StatusCodes.Status504GatewayTimeout] = ("upstream-unavailable", "The upstream service did not respond in time."),
