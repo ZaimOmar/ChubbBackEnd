@@ -10,6 +10,7 @@ namespace Chubb.Notification.Api;
 public static class AuthenticationSetup
 {
     public const string AuthenticatedPolicy = "authenticated";
+    public const string InboxPolicy = "notification-inbox";
 
     private static readonly TimeSpan ClockSkew = TimeSpan.FromSeconds(30);
 
@@ -26,7 +27,8 @@ public static class AuthenticationSetup
         services.AddAuthorizationBuilder()
             .SetFallbackPolicy(new AuthorizationPolicyBuilder()
                 .RequireAuthenticatedUser().Build())
-            .AddPolicy(AuthenticatedPolicy, policy => policy.RequireAuthenticatedUser());
+            .AddPolicy(AuthenticatedPolicy, policy => policy.RequireAuthenticatedUser())
+            .AddPolicy(InboxPolicy, policy => policy.RequireRole(Roles.Claimant, Roles.Manager));
         return services;
     }
 

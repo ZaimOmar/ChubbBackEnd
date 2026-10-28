@@ -1,0 +1,1144 @@
+openapi: 3.0.4
+info:
+  title: Chubb Claims API
+  version: v1
+paths:
+  /claims:
+    post:
+      operationId: SubmitClaim
+      summary: Submit a claim (Claimant)
+      tags:
+        - Claims
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 8 to 128 characters of A-Z, a-z, 0-9, underscore and hyphen. A resend with the same key and bytes returns the stored response.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_-]{8,128}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimsSubmitClaimRequest'
+      responses:
+        '201':
+          description: Created
+          headers:
+            Location:
+              description: URL of the created claim.
+              schema:
+                type: string
+            Idempotent-Replayed:
+              description: 'true when this is a stored response being replayed.'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsClaimantClaimView'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '409':
+          description: Conflict (domain refusal, or idempotency-request-in-progress with a Retry-After header)
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying, set for idempotency-request-in-progress.
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '413':
+          description: Request body above 64 KB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '422':
+          description: Unprocessable request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+    get:
+      operationId: ListClaims
+      summary: List claims (Officer or Manager)
+      tags:
+        - Claims
+      parameters:
+        - name: market
+          in: query
+          schema:
+            type: string
+            enum: [SG, HK, MY, TH, ID, AU]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [Motor, Property]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [Submitted, UnderReview, InfoRequested, PendingDecisionApproval, Approved, Rejected, PendingSettlementApproval, Settling, Settled]
+        - name: assigneeId
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: sort
+          in: query
+          description: Defaults to newest, or to oldest (open proposal age, then claim number) when status is PendingDecisionApproval.
+          schema:
+            type: string
+            enum: [newest, oldest]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsStaffClaimPage'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/{id}:
+    get:
+      operationId: GetClaim
+      summary: Read a claim; the view depends on the caller's role
+      tags:
+        - Claims
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/ClaimsClaimantClaimView'
+                  - $ref: '#/components/schemas/ClaimsStaffClaimView'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '404':
+          description: Claim not found (also for a claim the caller does not own)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/{id}/timeline:
+    get:
+      operationId: GetClaimTimeline
+      summary: Read the claim progress trail; claimants see Public entries only
+      tags:
+        - Claims
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/ClaimsClaimantTimelineItem'
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/ClaimsStaffTimelineEntry'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '404':
+          description: Claim not found (also for a claim the caller does not own)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/{id}/assign:
+    post:
+      operationId: AssignClaim
+      summary: Pick up a claim (Officer)
+      tags:
+        - Claims
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 8 to 128 characters of A-Z, a-z, 0-9, underscore and hyphen. A resend with the same key and bytes returns the stored response.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_-]{8,128}$'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimsEmptyRequest'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Idempotent-Replayed:
+              description: 'true when this is a stored response being replayed.'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsStaffClaimView'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '404':
+          description: Claim not found (also for a claim the caller does not own)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '409':
+          description: Conflict (domain refusal, or idempotency-request-in-progress with a Retry-After header)
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying, set for idempotency-request-in-progress.
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '413':
+          description: Request body above 64 KB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/{id}/assessed-amount:
+    post:
+      operationId: RecordAssessedAmount
+      summary: Record the assessed amount (assigned Officer)
+      tags:
+        - Claims
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 8 to 128 characters of A-Z, a-z, 0-9, underscore and hyphen. A resend with the same key and bytes returns the stored response.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_-]{8,128}$'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimsAssessedAmountRequest'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Idempotent-Replayed:
+              description: 'true when this is a stored response being replayed.'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsStaffClaimView'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '404':
+          description: Claim not found (also for a claim the caller does not own)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '409':
+          description: Conflict (domain refusal, or idempotency-request-in-progress with a Retry-After header)
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying, set for idempotency-request-in-progress.
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '413':
+          description: Request body above 64 KB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '422':
+          description: Unprocessable request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/{id}/decision-proposals:
+    post:
+      operationId: ProposeDecision
+      summary: Propose approve or reject (assigned Officer)
+      tags:
+        - Claims
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 8 to 128 characters of A-Z, a-z, 0-9, underscore and hyphen. A resend with the same key and bytes returns the stored response.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_-]{8,128}$'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimsProposeDecisionRequest'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Idempotent-Replayed:
+              description: 'true when this is a stored response being replayed.'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsStaffClaimView'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '404':
+          description: Claim not found (also for a claim the caller does not own)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '409':
+          description: Conflict (domain refusal, or idempotency-request-in-progress with a Retry-After header)
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying, set for idempotency-request-in-progress.
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '413':
+          description: Request body above 64 KB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '422':
+          description: Unprocessable request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/{id}/decision-proposals/{pid}/confirm:
+    post:
+      operationId: ConfirmDecision
+      summary: Confirm the open proposal (Manager, never the maker); takes no body
+      tags:
+        - Claims
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 8 to 128 characters of A-Z, a-z, 0-9, underscore and hyphen. A resend with the same key and bytes returns the stored response.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_-]{8,128}$'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: OK
+          headers:
+            Idempotent-Replayed:
+              description: 'true when this is a stored response being replayed.'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsStaffClaimView'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '404':
+          description: Claim not found (also for a claim the caller does not own)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '409':
+          description: Conflict (domain refusal, or idempotency-request-in-progress with a Retry-After header)
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying, set for idempotency-request-in-progress.
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '413':
+          description: Request body above 64 KB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/{id}/decision-proposals/{pid}/send-back:
+    post:
+      operationId: SendBackDecision
+      summary: Send the proposal back to the maker (Manager)
+      tags:
+        - Claims
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: 8 to 128 characters of A-Z, a-z, 0-9, underscore and hyphen. A resend with the same key and bytes returns the stored response.
+          schema:
+            type: string
+            minLength: 8
+            maxLength: 128
+            pattern: '^[A-Za-z0-9_-]{8,128}$'
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+        - name: pid
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClaimsSendBackRequest'
+      responses:
+        '200':
+          description: OK
+          headers:
+            Idempotent-Replayed:
+              description: 'true when this is a stored response being replayed.'
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsStaffClaimView'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '404':
+          description: Claim not found (also for a claim the caller does not own)
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '409':
+          description: Conflict (domain refusal, or idempotency-request-in-progress with a Retry-After header)
+          headers:
+            Retry-After:
+              description: Seconds to wait before retrying, set for idempotency-request-in-progress.
+              schema:
+                type: integer
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '413':
+          description: Request body above 64 KB
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '422':
+          description: Unprocessable request
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+components:
+  schemas:
+    ClaimsAssessedAmountRequest:
+      type: object
+      required:
+        - assessedAmount
+      properties:
+        assessedAmount:
+          type: number
+          format: decimal
+          minimum: 0.01
+        note:
+          type: string
+          maxLength: 1000
+      additionalProperties: false
+    ClaimsClaimantClaimView:
+      type: object
+      required:
+        - id
+        - claimNumber
+        - type
+        - market
+        - currency
+        - status
+        - incidentDate
+        - description
+        - estimatedAmount
+        - submittedAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+        type:
+          type: string
+          enum: [Motor, Property]
+        market:
+          type: string
+          enum: [SG, HK, MY, TH, ID, AU]
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [Submitted, UnderReview, InfoRequested, PendingDecisionApproval, Approved, Rejected, PendingSettlementApproval, Settling, Settled]
+        incidentDate:
+          type: string
+          format: date
+        description:
+          type: string
+        estimatedAmount:
+          type: number
+          format: decimal
+        approvedAmount:
+          type: number
+          format: decimal
+          nullable: true
+        rejectionReason:
+          $ref: '#/components/schemas/ClaimsRejectionReason'
+          nullable: true
+          description: Present only when the claim is Rejected; the wording the checker confirmed.
+        submittedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    ClaimsClaimantTimelineItem:
+      type: object
+      required:
+        - id
+        - occurredAt
+        - summary
+      properties:
+        id:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        summary:
+          type: string
+      additionalProperties: false
+    ClaimsEmptyRequest:
+      type: object
+      additionalProperties: false
+    ClaimsMotorDetails:
+      type: object
+      required:
+        - vehicleRegistration
+        - incidentLocation
+      properties:
+        vehicleRegistration:
+          type: string
+          maxLength: 20
+        incidentLocation:
+          type: string
+          maxLength: 200
+      additionalProperties: false
+    ClaimsOpenProposalView:
+      type: object
+      required:
+        - id
+        - outcome
+        - rationale
+        - makerId
+        - proposedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        outcome:
+          type: string
+          enum: [Approve, Reject]
+        amount:
+          type: number
+          format: decimal
+          nullable: true
+        currency:
+          type: string
+          nullable: true
+        reasonCode:
+          type: string
+          nullable: true
+        rationale:
+          type: string
+        justification:
+          type: string
+          nullable: true
+        claimantReason:
+          type: string
+          nullable: true
+        makerId:
+          type: string
+          format: uuid
+        proposedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    ClaimsProblemDetails:
+      type: object
+      required:
+        - type
+        - title
+        - status
+        - detail
+        - correlationId
+      properties:
+        type:
+          type: string
+          enum: [validation-error, idempotency-key-missing, idempotency-key-invalid, idempotency-key-reused, idempotency-request-in-progress, unauthorized, forbidden, claim-not-found, payload-too-large, server-error, invalid-transition, claim-already-assigned, concurrency-conflict, proposal-pending, proposal-not-open, not-assigned-officer, maker-cannot-check, policy-not-found, market-mismatch, incident-outside-policy-period, incident-date-in-future, currency-mismatch, reason-code-invalid, assessed-amount-required, payable-zero, justification-required, same-officer, phase-2-not-enabled]
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+        detail:
+          type: string
+        correlationId:
+          type: string
+        errors:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+      additionalProperties: false
+    ClaimsPropertyDetails:
+      type: object
+      required:
+        - propertyAddress
+        - damageType
+      properties:
+        propertyAddress:
+          type: string
+          maxLength: 300
+        damageType:
+          type: string
+          maxLength: 100
+      additionalProperties: false
+    ClaimsProposeDecisionRequest:
+      type: object
+      required:
+        - outcome
+        - rationale
+      properties:
+        outcome:
+          type: string
+          enum: [Approve, Reject]
+        reasonCode:
+          type: string
+          nullable: true
+          enum: [NOT_COVERED, POLICY_INACTIVE, EXCLUSION_APPLIES, INSUFFICIENT_EVIDENCE, DUPLICATE_CLAIM, NO_RESPONSE]
+        rationale:
+          type: string
+          minLength: 10
+          maxLength: 2000
+        justification:
+          type: string
+          nullable: true
+          maxLength: 2000
+        claimantReason:
+          type: string
+          nullable: true
+          minLength: 10
+          maxLength: 500
+          description: Required for Reject; shown to the claimant after confirmation. The rationale is never shown.
+      additionalProperties: false
+    ClaimsRejectionReason:
+      type: object
+      required:
+        - code
+        - label
+        - claimantReason
+      properties:
+        code:
+          type: string
+          enum: [NOT_COVERED, POLICY_INACTIVE, EXCLUSION_APPLIES, INSUFFICIENT_EVIDENCE, DUPLICATE_CLAIM, NO_RESPONSE]
+        label:
+          type: string
+        claimantReason:
+          type: string
+      additionalProperties: false
+    ClaimsSendBackRequest:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          minLength: 10
+          maxLength: 1000
+      additionalProperties: false
+    ClaimsStaffClaimPage:
+      type: object
+      required:
+        - items
+        - page
+        - pageSize
+        - totalCount
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClaimsStaffClaimView'
+        page:
+          type: integer
+          format: int32
+        pageSize:
+          type: integer
+          format: int32
+        totalCount:
+          type: integer
+          format: int32
+      additionalProperties: false
+    ClaimsStaffClaimView:
+      type: object
+      required:
+        - id
+        - claimNumber
+        - type
+        - market
+        - currency
+        - status
+        - incidentDate
+        - description
+        - estimatedAmount
+        - claimantId
+        - policyId
+        - reserve
+        - submittedAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        claimNumber:
+          type: string
+        type:
+          type: string
+          enum: [Motor, Property]
+        market:
+          type: string
+          enum: [SG, HK, MY, TH, ID, AU]
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [Submitted, UnderReview, InfoRequested, PendingDecisionApproval, Approved, Rejected, PendingSettlementApproval, Settling, Settled]
+        incidentDate:
+          type: string
+          format: date
+        description:
+          type: string
+        estimatedAmount:
+          type: number
+          format: decimal
+        claimantId:
+          type: string
+          format: uuid
+        policyId:
+          type: string
+          format: uuid
+        assignedOfficerId:
+          type: string
+          format: uuid
+          nullable: true
+        assessedAmount:
+          type: number
+          format: decimal
+          nullable: true
+        netPayable:
+          type: number
+          format: decimal
+          nullable: true
+        reserve:
+          type: number
+          format: decimal
+        payable:
+          type: number
+          format: decimal
+          nullable: true
+        openProposal:
+          $ref: '#/components/schemas/ClaimsOpenProposalView'
+          nullable: true
+        submittedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      additionalProperties: false
+    ClaimsStaffTimelineEntry:
+      type: object
+      required:
+        - id
+        - occurredAt
+        - eventType
+        - actorId
+        - actorRole
+        - summary
+        - visibility
+      properties:
+        id:
+          type: string
+          format: uuid
+        occurredAt:
+          type: string
+          format: date-time
+        eventType:
+          type: string
+          enum: [Submitted, Assigned, Reassigned, InformationRequested, InformationProvided, Assessed, DecisionProposed, DecisionUnderReview, DecisionConfirmed, DecisionAnnounced, DecisionSentBack, ProposalWithdrawn, Correction, Refused]
+        fromStatus:
+          type: string
+          enum: [Submitted, UnderReview, InfoRequested, PendingDecisionApproval, Approved, Rejected, PendingSettlementApproval, Settling, Settled]
+          nullable: true
+        toStatus:
+          type: string
+          enum: [Submitted, UnderReview, InfoRequested, PendingDecisionApproval, Approved, Rejected, PendingSettlementApproval, Settling, Settled]
+          nullable: true
+        actorId:
+          type: string
+          format: uuid
+        actorRole:
+          type: string
+          enum: [Claimant, Officer, Manager, System]
+        summary:
+          type: string
+        reason:
+          type: string
+          nullable: true
+        visibility:
+          type: string
+          enum: [Public, Internal]
+        proposalId:
+          type: string
+          format: uuid
+          nullable: true
+        makerId:
+          type: string
+          format: uuid
+          nullable: true
+        checkerId:
+          type: string
+          format: uuid
+          nullable: true
+        referencedEntryId:
+          type: string
+          format: uuid
+          nullable: true
+        reserveBefore:
+          type: number
+          format: decimal
+          nullable: true
+        reserveAfter:
+          type: number
+          format: decimal
+          nullable: true
+      additionalProperties: false
+    ClaimsSubmitClaimRequest:
+      type: object
+      required:
+        - policyNumber
+        - type
+        - market
+        - incidentDate
+        - description
+        - estimatedAmount
+      properties:
+        policyNumber:
+          type: string
+          maxLength: 30
+        type:
+          type: string
+          enum: [Motor, Property]
+        market:
+          type: string
+          enum: [SG, HK, MY, TH, ID, AU]
+        incidentDate:
+          type: string
+          format: date
+        description:
+          type: string
+          maxLength: 2000
+        estimatedAmount:
+          type: number
+          format: decimal
+          minimum: 0.01
+        motorDetails:
+          $ref: '#/components/schemas/ClaimsMotorDetails'
+        propertyDetails:
+          $ref: '#/components/schemas/ClaimsPropertyDetails'
+      additionalProperties: false

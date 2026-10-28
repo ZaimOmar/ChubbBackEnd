@@ -7,9 +7,9 @@ WORKDIR /src
 
 # Restore first, from project files only, so the layer is cached until a dependency changes.
 COPY Directory.Build.props Directory.Packages.props global.json .editorconfig ./
-COPY src/Contracts/*.csproj src/Contracts/
-COPY src/Gateway/*.csproj src/Gateway/
-RUN dotnet restore src/Gateway/Gateway.csproj
+COPY src/Contracts/*.csproj src/Contracts/packages.lock.json src/Contracts/
+COPY src/Gateway/*.csproj src/Gateway/packages.lock.json src/Gateway/
+RUN dotnet restore --locked-mode src/Gateway/Gateway.csproj
 
 COPY src/Contracts src/Contracts
 COPY src/Gateway src/Gateway

@@ -4,7 +4,7 @@ Status: **DRAFT** (owner: `architect`; domain input from `business-analyst`). Li
 
 ## 0. Phase boundary and cut line
 
-Human decision: 5-hour cap kept. **Phase 1 (built):** Gateway, Identity, Claims (trail, maker-checker on the decision), Reporting, Notification; demo ends at **Approved**. **Phase 2 (designed, NOT built):** Finance service = Payment, General Ledger, Pool Fund; settlement maker-checker; `Settling`/`Settled`. In every diagram below, **dashed or "PHASE 2" labelled = designed, not built**; in tables see the Phase column. Finance is not in the Phase 1 docker-compose. **Cut line:** about 2:45-3:00 into the build, Claims + trail + decision maker-checker + Reporting + Notification work end to end; remaining time is hardening and tests, not Finance. Extension points left in Claims: see `docs/architecture/ARCHITECTURE.md` section 0.
+Human decision: 5-hour cap kept. **Phase 1 (this build; what docker-compose runs today is in `docs/architecture/ARCHITECTURE.md` section 10):** Gateway, Identity, Claims (trail, maker-checker on the decision), Reporting, Notification; demo ends at **Approved**. **Phase 2 (designed, NOT built):** Finance service = Payment, General Ledger, Pool Fund; settlement maker-checker; `Settling`/`Settled`. In every diagram below, **dashed or "PHASE 2" labelled = designed, not built**; in tables see the Phase column. Finance is not in the Phase 1 docker-compose. **Cut line:** about 2:45-3:00 into the build, Claims + trail + decision maker-checker + Reporting + Notification work end to end; remaining time is hardening and tests, not Finance. Extension points left in Claims: see `docs/architecture/ARCHITECTURE.md` section 0.
 
 ## 1. Module map
 

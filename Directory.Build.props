@@ -8,5 +8,10 @@
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
     <RootNamespace>Chubb.$(MSBuildProjectName)</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Reproducible restores: packages.lock.json is committed. Locked mode is enforced in CI and
+         Docker (CI=true, or pass the locked-mode restore option); local restores may update the file when a
+         dependency is changed on purpose. -->
+    <RestorePackagesWithLockFile Condition="'$(MSBuildProjectExtension)' == '.csproj'">true</RestorePackagesWithLockFile>
+    <RestoreLockedMode Condition="'$(CI)' == 'true'">true</RestoreLockedMode>
   </PropertyGroup>
 </Project>

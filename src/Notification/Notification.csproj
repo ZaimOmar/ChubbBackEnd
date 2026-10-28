@@ -3,6 +3,9 @@
     <ProjectReference Include="..\Contracts\Contracts.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Confluent.Kafka" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" PrivateAssets="all" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
 </Project>

@@ -36,20 +36,28 @@ services:
   # One-shot: creates the RS256 pair only if absent (ADR-008 amendment). Private key goes to
   # jwt-private (Identity only); public key to jwt-public (everyone who validates tokens).
   jwt-keys:
-    image: alpine/openssl:3.5.4@sha256:42c7389ef077aed0eb4e96d0abbd094083d701bbaff1313073b061c0c9cd8278
+    build:
+      context: docker/jwt-keys
+    # Non-root (uid 1654, same as the .NET "app" user) and hardened like the other services.
+    user: "1654:1654"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
         set -eu
+        echo "jwt-keys running as: $$(id)"
         if [ ! -f /jwt-private/private.pem ]; then
           umask 077
           openssl genrsa -out /jwt-private/private.pem 2048
         fi
         # Derived from the private key every run, so the pair can never diverge.
         openssl rsa -in /jwt-private/private.pem -pubout -out /jwt-public/public.pem
-        # 1654 is the non-root "app" user of the .NET images. Re-applied every run so a
-        # half-finished earlier run cannot leave unreadable files.
-        chown 1654:1654 /jwt-private/private.pem
+        # Re-applied every run so a half-finished earlier run cannot leave loose permissions.
+        # Private: owner (uid 1654) only, and only the Identity container mounts that volume.
         chmod 400 /jwt-private/private.pem
         chmod 644 /jwt-public/public.pem
     volumes:
@@ -71,7 +79,9 @@ services:
       - postgres-data:/var/lib/postgresql/data
       - ./docker/postgres/init-databases.sh:/docker-entrypoint-initdb.d/init-databases.sh:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d postgres"]
+      # -h 127.0.0.1 (TCP) on purpose: the temporary init server on a first start listens on the
+      # unix socket only, so a socket check reports healthy just before Postgres restarts.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d postgres"]
       interval: 5s
       timeout: 3s
       retries: 40
@@ -103,6 +113,91 @@ services:
     healthcheck: *dotnet-healthcheck
     restart: unless-stopped
 
+  claims:
+    build:
+      context: .
+      dockerfile: src/Claims/Dockerfile
+    <<: *hardening
+    environment:
+      # DEV-ONLY, set explicitly (not interpolated): Development makes the Claims host seed ~30 demo
+      # claims through the real handlers on an empty database. Never run a non-demo stack like this.
+      ASPNETCORE_ENVIRONMENT: Development
+      # Built from the same variable that creates the role, so the two cannot drift apart.
+      ConnectionStrings__ClaimsDb: Host=postgres;Port=5432;Database=claims_db;Username=claims;Password=${CLAIMS_DB_PASSWORD:-dev-only-claims-db}
+      Jwt__Issuer: ${Jwt__Issuer:-chubb-identity}
+      Jwt__Audience: ${Jwt__Audience:-chubb-claims-api}
+      Jwt__PublicKeyPath: ${Jwt__PublicKeyPath:-/run/jwt-public/public.pem}
+      Settlement__Enabled: "false"
+      Kafka__BootstrapServers: ${Kafka__BootstrapServers:-kafka:9092}
+    # No published port: only the gateway (edge) and postgres (data) can reach it.
+    networks: [edge, data]
+    depends_on:
+      jwt-keys:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - jwt-public:/run/jwt-public:ro
+    healthcheck: *dotnet-healthcheck
+    restart: unless-stopped
+
+  # Single-broker KRaft, dev only: replication factor 1, so acks=all means the leader's ack. Plaintext
+  # on the internal data network; no published port. Topics are created only by kafka-init.
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0@sha256:24cdd3a7fa89d2bed150560ebea81ff1943badfa61e51d66bb541a6b0d7fb047
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    environment:
+      CLUSTER_ID: ${KAFKA_CLUSTER_ID:-MkU3OEVBNTcwNTJENDM2Qk}
+      KAFKA_NODE_ID: "1"
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+      KAFKA_HEAP_OPTS: -Xms384m -Xmx384m
+    networks: [data]
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-topics --bootstrap-server localhost:9092 --list > /dev/null"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+      start_period: 20s
+    restart: unless-stopped
+
+  # One-shot and idempotent. Topic names must match Contracts.Topics; claims.events has 3 partitions
+  # (per-claim order comes from key = claimId), the DLQ has 1 (low volume, easy to read).
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.0@sha256:24cdd3a7fa89d2bed150560ebea81ff1943badfa61e51d66bb541a6b0d7fb047
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic claims.events --partitions 3 --replication-factor 1
+        kafka-topics --bootstrap-server kafka:9092 --create --if-not-exists --topic claims.events.dlq --partitions 1 --replication-factor 1
+    networks: [data]
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+
   gateway:
     build:
       context: .
@@ -125,6 +220,8 @@ services:
         condition: service_completed_successfully
       identity:
         condition: service_healthy
+      claims:
+        condition: service_healthy
     volumes:
       - jwt-public:/run/jwt-public:ro
     ports:
@@ -133,14 +230,61 @@ services:
     healthcheck: *dotnet-healthcheck
     restart: unless-stopped
 
-  # --- Added in their own slices (same pattern as identity: build, own `environment:` list with only
-  # the keys that service needs, networks, depends_on, healthcheck; never a shared env_file) ---
-  # kafka:           confluentinc/cp-kafka (pinned), KRaft single broker, healthcheck via kafka-topics
-  # kafka-init:      one-shot creating claims.events and claims.events.dlq (idempotent --if-not-exists)
-  # claims:          depends_on postgres, kafka-init; mounts jwt-public:ro
-  # reporting:       depends_on postgres, kafka-init; mounts jwt-public:ro
-  # notification:    depends_on postgres, kafka-init; mounts jwt-public:ro
-  # kafka-ui:        optional demo container, pinned, behind a compose profile
+  reporting:
+    build:
+      context: .
+      dockerfile: src/Reporting/Dockerfile
+    <<: *hardening
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      # Built from the same variable that creates the role, so the two cannot drift apart.
+      ConnectionStrings__ReportingDb: Host=postgres;Port=5432;Database=reporting_db;Username=reporting;Password=${REPORTING_DB_PASSWORD:-dev-only-reporting-db}
+      Jwt__Issuer: ${Jwt__Issuer:-chubb-identity}
+      Jwt__Audience: ${Jwt__Audience:-chubb-claims-api}
+      Jwt__PublicKeyPath: ${Jwt__PublicKeyPath:-/run/jwt-public/public.pem}
+      Kafka__BootstrapServers: ${Kafka__BootstrapServers:-kafka:9092}
+    # No published port: only the gateway (edge), postgres and kafka (data) can reach it.
+    networks: [edge, data]
+    depends_on:
+      jwt-keys:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - jwt-public:/run/jwt-public:ro
+    healthcheck: *dotnet-healthcheck
+    restart: unless-stopped
+
+  notification:
+    build:
+      context: .
+      dockerfile: src/Notification/Dockerfile
+    <<: *hardening
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      # Built from the same variable that creates the role, so the two cannot drift apart.
+      ConnectionStrings__NotificationDb: Host=postgres;Port=5432;Database=notification_db;Username=notification;Password=${NOTIFICATION_DB_PASSWORD:-dev-only-notification-db}
+      Jwt__Issuer: ${Jwt__Issuer:-chubb-identity}
+      Jwt__Audience: ${Jwt__Audience:-chubb-claims-api}
+      Jwt__PublicKeyPath: ${Jwt__PublicKeyPath:-/run/jwt-public/public.pem}
+      Kafka__BootstrapServers: ${Kafka__BootstrapServers:-kafka:9092}
+    # No published port: only the gateway (edge) and postgres (data) can reach it.
+    networks: [edge, data]
+    depends_on:
+      jwt-keys:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - jwt-public:/run/jwt-public:ro
+    healthcheck: *dotnet-healthcheck
+    restart: unless-stopped
+
+  # kafka-ui: optional demo container, pinned, behind a compose profile (not built)
 
 networks:
   edge:           # gateway <-> services it proxies to
@@ -151,3 +295,4 @@ volumes:
   jwt-private:
   jwt-public:
   postgres-data:
+  kafka-data:
