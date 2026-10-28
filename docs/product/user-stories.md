@@ -21,12 +21,13 @@ Retired or merged ids: US-08 (replaced by US-26 to US-29, US-35 to US-37), US-15
 As a claimant, I want to submit a motor or property claim, so that the insurer starts handling it.
 - Given a valid policy number, market, type, incident date, description and amount, When I submit, Then I get a claim number (BR-25), status Submitted, claim currency of my policy's market (BR-23), and exactly one entry: Public, actor Claimant (from the token), text "Claim received: {claimNumber}" (BR-75; it is the submission entry, not a second one).
 - Given a missing or invalid field, When I submit, Then I get a validation error and no claim exists.
-- Rules: BR-04, BR-08, BR-22 (reserve = estimate), BR-23, BR-25, BR-75. Touches: CS `POST /claims`; FE report form.
+- Idempotency: Given a submit with `Idempotency-Key` k1 that succeeded, When the same bytes are sent again with k1 (weak connection, double-click), Then the same 201 and body come back with `Idempotent-Replayed: true`, the claim number sequence advanced once and there is still exactly one "Claim received" entry and one outbox row (BR-82, BR-25). Given k1 with a different body, Then 422 `idempotency-key-reused`, nothing written (BR-83). Given no header or a malformed key (not 8 to 128 of `A-Za-z0-9-_`), Then 400 `idempotency-key-missing` / `idempotency-key-invalid`, no claim (BR-79). Given a 400 validation error, Then it is not stored and the corrected form may reuse the key (BR-86). Given the record is older than 24 hours, Then the same key creates a new claim (BR-87; officer handles with `DUPLICATE_CLAIM`).
+- Rules: BR-04, BR-08, BR-22 (reserve = estimate), BR-23, BR-25, BR-75, BR-79 to BR-87. Touches: CS `POST /claims`; FE report form (one key per submission).
 
 **US-03 [TRAIL] See the public timeline of my claim** (MUST, T1)
 As a claimant, I want a timeline of what happened to my claim, so that I know where it stands and why.
 - Given my claim was submitted and picked up, When I open the detail, Then I see "Claim received: {claimNumber}", "Claim picked up for review" in order with date.
-- Given a decision proposal is pending, Then I see only "Decision under review" (no outcome, amount, names). After a send-back I still see only that, never a send-back (BR-33).
+- Given a decision proposal is pending, Then I see only "Decision under review" (no outcome, amount, names) and the claim status (detail and list DTO) reads UnderReview, label "Under review": PendingDecisionApproval is masked from claimants; staff see the real status. After a send-back or withdrawal I still see only that one entry and the status never flips, so I never see a send-back or count rework (BR-33, BR-08).
 - Given Internal entries exist, Then none appear and no count, gap or id reveals them (BR-09).
 - Given a confirmed rejection, Then I see code and text; given confirmed approval, "approved for {currency amount}".
 - Rules: BR-08, BR-09, BR-12, BR-33. Touches: CS `GET /claims/{id}/timeline`; FE shared timeline component.
@@ -36,35 +37,42 @@ As an officer, I want to filter incoming claims and pick one up, so that I own i
 - Given Submitted claims, When I filter by market and type, Then only matching claims show.
 - Given a Submitted claim, When I pick it up, Then UnderReview, assigned to me, one Public entry.
 - Given two officers pick up at once, Then exactly one succeeds, the other gets 409.
-- Rules: BR-01, BR-02, BR-26. Touches: CS `GET /claims`, `POST /claims/{id}/assign`; FE staff queue.
+- Idempotency: Given I picked up claim X with key k1, When the same request is resent with k1 after the claim has moved to InfoRequested, Then I get the original 200 with `Idempotent-Replayed: true`, not a 409, and no second entry (BR-82). Given two officers use different keys at once, Then one 200, one 409 (BR-26, BR-38; BR-85 does not apply). Given the same key and same request twice in flight, Then one executes and the other gets 409 `idempotency-request-in-progress` with `Retry-After: 1`, no Refused entry (BR-85). Given officer B sends officer A's key k1 on the same route, Then B executes as B and never receives A's response (BR-80). Given no key, Then 400 and no entry (BR-79).
+- Rules: BR-01, BR-02, BR-26, BR-79 to BR-87. Touches: CS `GET /claims`, `POST /claims/{id}/assign`; FE staff queue.
 
 **US-26 Set the assessed amount** (MUST, T1)
 As the assigned officer, I want to set the assessed (gross) amount, so that the net payable and reserve reflect my evaluation.
-- Given UnderReview with policy excess 500, When I set assessed 8,000, Then net payable 7,500 and reserve 7,500, with one Internal entry showing assessed, excess, payable and old/new reserve.
-- Given assessed 400 and excess 500, Then payable is 0 (an approve proposal will be refused, BR-19). Given a claim not assigned to me or in a Pending* status, Then 403 / 409.
-- Rules: BR-04, BR-19, BR-21, BR-22, BR-36. Touches: CS command (endpoint is the architect's); FE claim detail. (Answers BA request 1.)
+- Given UnderReview with policy excess 500, When I set assessed 8,000, Then net payable 7,500 and reserve 7,500, with one Internal entry (+1) showing assessed, excess, payable and reserve before/after (no separate reserve entry).
+- Given assessed 10,000, excess 500 and remaining coverage limit 8,000, Then payable 8,000: payable = min(max(assessed - excess, 0), remaining coverage limit) (BR-19; Phase 1 remaining = limit minus payables of other Approved claims on the policy).
+- Given assessed 400 and excess 500, Then payable is 0 (an approve proposal will be refused, BR-19). Given a claim not assigned to me, Then 403 `not-assigned-officer` (a resource-rule refusal: one Internal Refused entry). Given a claim in a Pending* status, Then 409 `invalid-transition` / `proposal-pending` (Refused entry, no state change). Given a Claimant or Manager-only user calls the route, Then 403 from the role policy: trail unchanged, no idempotency record, one security log event.
+- Idempotency: Given I set assessed 7,500 with k1, When I resend 7,500 with k1, Then the same response plus `Idempotent-Replayed: true`, one Internal entry only, reserve unchanged. Given I resend with k1 but assessed 8,000, Then 422 `idempotency-key-reused` and the assessed amount stays 7,500 (BR-83). Missing or malformed key gives 400 and writes nothing (BR-79). A 5xx is never stored, so a retry with k1 executes as new (BR-84, BR-86).
+- Rules: BR-04, BR-19, BR-21, BR-22, BR-36, BR-79 to BR-87. Touches: CS `POST /claims/{id}/assessed-amount` body `{ assessedAmount, note }` (ARCHITECTURE section 9; Officer policy; 200 with the updated claim summary); FE claim detail. (Answers BA request 1.)
 
 **US-27 [MC][TRAIL] Propose a decision** (MUST, T1)
 As the assigned officer (maker), I want to propose approve or reject with a rationale, so that a manager can check it before money moves.
-- Given UnderReview with an assessed amount, When I propose approve with rationale (min 10 chars), Then PendingDecisionApproval, one Internal entry (outcome, amount, rationale, makerId, proposalId) and one Public "Decision under review".
-- Given reject without a valid code (BR-17 list) or text under 10 chars, Then 422. Given approve with payable 0, or without an assessed amount, Then 422. Given payable above the estimate without justification, Then 422.
+- Given UnderReview with an assessed amount, When I propose approve with rationale (min 10 chars) for the FIRST time on this claim, Then PendingDecisionApproval and entry count +2: one Internal entry (outcome, amount, rationale, makerId, proposalId) and one Public "Decision under review".
+- Given the proposal was sent back or withdrawn and I propose again, Then entry count +1 (Internal only) and no new Public entry, so the claimant cannot count rework cycles (BR-08, BR-33).
+- Given reject without a valid code (BR-17 list) or text under 10 chars, Then 422. Given approve with payable 0, Then 422 `payable-zero`. Given approve without an assessed amount, Then 422 `assessed-amount-required`. Given reject without an assessed amount, Then it is allowed (coverage is decided before quantum, BR-21). Given payable above the estimate without justification, Then 422.
 - Given the claim is already Pending*, Then 409; reserve, paid and exposure are unchanged after proposing (BR-35).
-- Rules: BR-01, BR-10, BR-17 to BR-19, BR-21, BR-33, BR-35, BR-36. Touches: CS `POST /claims/{id}/decision-proposals`; FE decision form.
+- Idempotency: Given I proposed with k1, When the same proposal is resent with k1, Then the same response plus replay header, still one proposal, one Internal and one Public "Decision under review" entry, one outbox row, no 409 for "already Pending" (BR-82). Given a proposal without reason sent with k2, Then 400/422 is not stored and the same k2 with a valid body succeeds once (BR-86). Given k1 reused with a different outcome or amount, Then 422 `idempotency-key-reused` (BR-83). Missing or malformed key gives 400 (BR-79).
+- Rules: BR-01, BR-10, BR-17 to BR-19, BR-21, BR-33, BR-35, BR-36, BR-79 to BR-87. Touches: CS `POST /claims/{id}/decision-proposals`; FE decision form.
 
 **US-28 [MC][TRAIL] Confirm a decision (checker)** (MUST, T1)
 As a manager (checker), I want to confirm a pending decision exactly as proposed, so that the second signature is on record.
-- Given PendingDecisionApproval and I am a Manager who is not the maker, When I confirm, Then Approved (reserve = payable) or Rejected (reserve 0), one Internal entry naming makerId and checkerId, one Public final entry (amount or code and text).
-- Given I am an Officer-only user, Then 403. Given I am the maker (even if I also hold Manager), Then 403 (BR-32).
+- Given PendingDecisionApproval and I am a Manager who is not the maker, When I confirm, Then Approved (reserve = payable) or Rejected (reserve 0), entry count +2: one Internal entry naming makerId and checkerId, one Public final entry (amount or code and text).
+- Given I am an Officer-only user, Then 403 from the role policy: logged only, trail entry count unchanged, no idempotency record, exactly one security log event (human decision; not a Refused entry). Given I am the maker (even if I also hold Manager), Then 403 `maker-cannot-check` and one Refused entry (resource rule, BR-32).
 - Given two managers confirm at once, Then one succeeds, one gets 409; the decision applies once (BR-38).
 - Given a confirm payload, Then it has no editable amount, code or outcome (BR-34).
-- Rules: BR-01, BR-02, BR-22, BR-31, BR-32, BR-34, BR-38, BR-39. Touches: CS `POST /claims/{id}/decision-proposals/{pid}/confirm`; FE manager review. (A refused attempt writes its Internal entry in US-22, T2A; Tier 1 only guarantees the 403/409 and no state change.)
+- Idempotency: Given I confirmed with k1, When the same confirm is resent with k1, Then identical status and body plus `Idempotent-Replayed: true`; trail entry count, outbox row count and status are unchanged (BR-82). Given two parallel confirms with the same k1, Then one executes, the other gets 409 `idempotency-request-in-progress` or the replay, one transition entry, zero Refused entries (BR-85). Given two managers with different keys, Then one 200, one 409 and one Refused entry (BR-38). Given the maker (dual-role) confirms own proposal twice with k1, Then two 403 `maker-cannot-check`, the second with the replay header, exactly one Refused entry (BR-86, BR-32). Given an Officer-only 403 from the role policy, Then it is not stored, writes no key record and no trail entry, and produces one security log event (BR-86; role-policy 403s are outside BR-04). Given the same key from another actor, Then it is a separate record (BR-80).
+- Rules: BR-01, BR-02, BR-22, BR-31, BR-32, BR-34, BR-38, BR-39, BR-79 to BR-87. Touches: CS `POST /claims/{id}/decision-proposals/{pid}/confirm`; FE manager review. (A refused attempt writes its Internal entry in US-22, T2A; Tier 1 only guarantees the 403/409 and no state change.)
 
 **US-29 [MC][TRAIL] Send a decision back** (MUST, T1)
 As a manager (checker), I want to send a proposal back with a reason, so that the officer can rework it.
-- Given PendingDecisionApproval and I am not the maker, When I send back with a reason (min 10 chars), Then UnderReview, assignee unchanged, one Internal entry (reason, checkerId, proposalId); reserve unchanged.
+- Given PendingDecisionApproval and I am not the maker, When I send back with a reason (min 10 chars), Then UnderReview, assignee unchanged, entry count +1: one Internal entry (reason, checkerId, proposalId) and NO Public companion; reserve unchanged.
 - Given no reason, Then 422. Given I am the maker or an Officer-only user, Then 403.
-- Given the claimant views the timeline, Then they still see only "Decision under review".
-- Rules: BR-01, BR-10, BR-33, BR-34, BR-35, BR-39. Touches: CS `.../send-back`; FE manager review.
+- Given the claimant views the timeline or claim after the send-back, Then they still see only the one earlier "Decision under review" entry, nothing new, and the status reads UnderReview throughout (BR-33).
+- Idempotency: Given I sent back with k1, When resent with k1, Then the same response plus replay header and exactly one send-back entry, even though the claim is now UnderReview (not a 409) (BR-82). Given a missing reason, Then 400/422 is not stored and the same key with a reason succeeds once (BR-86). Same key with a different reason gives 422 `idempotency-key-reused` (BR-83). Missing or malformed key gives 400 (BR-79).
+- Rules: BR-01, BR-10, BR-33, BR-34, BR-35, BR-39, BR-79 to BR-87. Touches: CS `.../send-back`; FE manager review.
 
 **US-30 [MC] Manager pending-approval queue** (MUST, T1)
 As a manager, I want a list of claims awaiting my check, oldest first, so that proposals do not sit unseen.
@@ -94,11 +102,13 @@ As a manager, I want exposure by market and type in USD, so that I know what we 
 
 **US-18 [TRAIL] Every action writes exactly one entry, immutably** (MUST, T1)
 As an auditor, I want one trail entry per business action written with the state change, never editable, so that history is dependable evidence.
-- Given any command in BR-04, When it succeeds, Then entry count rises by exactly 1 with all mandatory fields (BR-05); a forced failure mid-command leaves neither state change nor entry (BR-07).
+- Given any command in BR-04, When it succeeds, Then the entry count rises by exactly 1 with all mandatory fields (BR-05), except two cases with a Public companion (one entry per audience per action, decision log 15): the claim's FIRST decision proposal adds +2 (Internal proposal + Public "Decision under review") and a decision confirm adds +2 (Internal confirm + Public final entry). Send-back +1 (Internal only, no Public companion), withdraw +1, a re-proposal after send-back or withdrawal +1 (Internal only), assessed amount +1, reassign +1, every resource-rule refusal +1. A forced failure mid-command leaves neither state change nor entry (BR-07).
+- Given a role-policy 403 (wrong role for the route), Then no entry is written and no idempotency record exists; it is logged as one security log event only. Only resource-rule refusals (not assigned, maker=checker, wrong state, lost race) are trailed (BR-04).
 - Given an existing entry, When update or delete is attempted (API, and DB role if time), Then it fails; a mistake is fixed by a new Correction entry (BR-06, BR-74).
 - Given I am the assigned officer or any Manager, When I issue a Correction with the id of one earlier entry and a reason of at least 10 characters, Then exactly one Internal Correction entry is added (any claim status, including final), the original is unchanged, and status, reserve, paid, exposure and metrics do not change.
-- Given the Correction is issued by a Claimant, System, or an Officer not assigned to the claim, or has no reason or no entry id, Then 403 (or 422) and no Correction exists; the claimant timeline never shows a Correction, a count or a gap.
-- Rules: BR-04 to BR-07, BR-10, BR-74. Touches: CS (history + outbox, one transaction); tests.
+- Given the Correction is issued by a Claimant or System (role policy), Then 403, no entry and no key record (security log only). Given an Officer not assigned to the claim, Then 403 `not-assigned-officer` and one Refused entry. Given no reason or an unknown entry id, Then 400 / 422 `entry-not-found`, no Correction exists. The claimant timeline never shows a Correction, a count or a gap.
+- Idempotency: the Correction route requires `Idempotency-Key`; Given the same key and body is resent, Then the same 200 plus `Idempotent-Replayed: true` and exactly one Correction entry (BR-82). Settlement stub routes (`.../settlement-proposals...`) also require a key and return 409 `phase-2-not-enabled` with a Refused entry; a replay returns the same 409 and writes no second entry (BR-86).
+- Rules: BR-04 to BR-07, BR-10, BR-74, BR-79 to BR-87. Touches: CS `POST /claims/{id}/corrections` body `{ referencedEntryId, reason, correctedStatement }` (history + outbox, one transaction); tests.
 
 **US-20 [TRAIL] Visibility and actor are enforced server-side** (MUST, T1)
 As a claimant and as an auditor, I want staff-only notes never sent to claimants and actors taken from the token, so that privacy and attribution hold.
@@ -118,30 +128,38 @@ As a claimant and as an auditor, I want staff-only notes never sent to claimants
 **US-07 Request information** (SHOULD, T2A; first to pull in)
 As the assigned officer, I want to ask the claimant a question, so that I can evaluate fairly.
 - Given UnderReview, When I request info with a question, Then InfoRequested, due date = request + 14 days, and a Public entry shows the question. Given an open request, Then 409; empty question, then 422; given a Pending* claim, then 409 (BR-15).
-- Rules: BR-13 to BR-16. Touches: CS `POST /claims/{id}/info-requests`; FE claim detail.
+- Idempotency: Given I requested info with k1, When resent with k1, Then the same response plus replay header, one request and one Public entry, no 409 for "open request" (BR-82). Given an empty question (422, nothing written), Then not stored and the corrected body may reuse the key (BR-86). Different question with k1 gives 422 `idempotency-key-reused` (BR-83). Missing or malformed key gives 400 (BR-79).
+- Rules: BR-13 to BR-16, BR-79 to BR-87. Touches: CS `POST /claims/{id}/info-requests`; FE claim detail.
 
 **US-04 Answer an information request** (SHOULD, T2A)
 As a claimant, I want to answer the officer's question, so that my claim moves on.
 - Given InfoRequested, When I respond, Then UnderReview with the same officer and a Public "Information received". Given any other status, Then 409 and no entry.
-- Rules: BR-01, BR-13 to BR-15. Touches: CS `POST /claims/{id}/info-responses`; FE respond form.
+- Idempotency: Given I answered with k1, When my phone resends the same answer with k1, Then the same 200 plus `Idempotent-Replayed: true` and exactly one Public "Information received" entry (BR-82, BR-04). Given the key is from another claimant, Then it is a separate record and my answer is never returned to them (BR-80, BR-12). Stored answer text is personal data: same access as the claim, deleted after 24 hours (BR-81, BR-87). Different answer text with k1 gives 422 (BR-83). Missing or malformed key gives 400 (BR-79).
+- Rules: BR-01, BR-13 to BR-15, BR-79 to BR-87. Touches: CS `POST /claims/{id}/info-responses`; FE respond form.
 
 **US-22 [TRAIL] Refused attempts are trailed** (SHOULD, T2A)
-As a manager, I want invalid or unauthorised attempts recorded internally, so that misuse is visible.
-- Given an officer tries to propose settlement on an UnderReview claim, a maker tries to confirm own proposal, or a confirm loses a race, Then 409/403, no state change, and exactly one Internal "Refused" entry naming the actor and the attempt.
-- Given an unauthenticated call, Then no entry is written.
-- Given a refused Correction attempt (BR-74), Then the same Internal "Refused" entry is written.
+As a manager, I want refused attempts on a claim recorded internally, so that misuse of a claim is visible. Scope (human decision): resource-rule refusals only.
+- Given an officer tries to propose settlement on an UnderReview claim, a maker tries to confirm own proposal, a non-assigned officer acts on the claim, or a confirm loses a race, Then 409/403, no state change, and exactly one Internal "Refused" entry naming the actor and the attempt.
+- Given a role-policy 403 (e.g. an Officer-only user calls confirm, a Claimant calls an officer route), Then NO entry is written and no idempotency record is stored; it is logged as one security log event only.
+- Given a claimant acts on another claimant's claim, Then 404 `claim-not-found`, no entry, no stored record, one security log event (BR-04 b).
+- Given an unauthenticated call (401), Then no entry is written.
+- Given a refused Correction attempt by a non-assigned officer (BR-74), Then the same Internal "Refused" entry is written; a Claimant's Correction attempt is a role-policy 403 (not trailed).
 - Rules: BR-01, BR-04, BR-32, BR-38, BR-74. Touches: CS.
 
 **US-31 [MC][TRAIL] Withdraw my proposal** (SHOULD, T2A)
 As the maker, I want to withdraw my pending proposal with a reason, so that I can correct it myself.
 - Given my PendingDecisionApproval proposal, When I withdraw with a reason, Then UnderReview, one Internal entry (reason, proposalId); claimant sees nothing new. Given I am not the maker, Then 403. Given the checker confirmed first, Then 409.
-- Rules: BR-02, BR-10, BR-36, BR-38. Touches: CS `.../withdraw`; FE claim detail.
+- Idempotency: Given I withdrew with k1, When resent with k1, Then the same response plus replay header and one withdraw entry (BR-82). Given confirm won the race and my withdraw got 409 with a Refused entry, When I resend with k1, Then the same 409 plus replay header and no second Refused entry (BR-86). To retry after a stored refusal I must use a new key. Missing reason (400/422) is not stored (BR-86). Missing or malformed key gives 400 (BR-79).
+- Rules: BR-02, BR-10, BR-36, BR-38, BR-79 to BR-87. Touches: CS `.../withdraw`; FE claim detail.
 
 **US-12 Manager reassigns a claim** (SHOULD, T2A)
-As a manager (or the current officer, release), I want to reassign a claim with a reason, so that workload is balanced.
-- Given UnderReview, InfoRequested or Pending*, When I reassign with a reason, Then assignee changes and one Internal entry records from, to, reason, who. Given a Pending* claim, Then the proposal is auto-withdrawn, the claim returns to UnderReview (or Approved, T2B), and the entry records the auto-withdrawal (BR-37).
-- Given no reason, Then 422; given a final claim, Then 409. The previous maker may check a later proposal by someone else (BR-37). The claim stays assigned and never re-enters the Submitted "oldest unassigned" view (BR-76).
-- Rules: BR-10, BR-27, BR-32, BR-37. Touches: CS (endpoint is the architect's); FE claim detail.
+As a manager (or the current officer handing the claim over), I want to reassign a claim to a named officer with a reason, so that workload is balanced.
+- Scope (human decision): a Manager may reassign any open, non-Submitted claim; an Officer only as the current assignee. "Release" (officer) means hand to a named officer; it never unassigns and never returns a claim to Submitted (BR-76). `newOfficerId` must be a known officer and not the current assignee, else 422 `unknown-officer`. A non-assignee Officer gets 403 `not-assigned-officer` with a Refused entry; a Claimant gets a role-policy 403 (log only).
+- Phase 1 statuses are UnderReview, InfoRequested and PendingDecisionApproval only; any other status (Submitted, Approved, Rejected, Settled, and in Phase 1 the settlement states) gives 409 `invalid-transition` plus one Refused entry (BR-27; Approved and PendingSettlementApproval join in Phase 2, Settling never).
+- Given UnderReview, InfoRequested or PendingDecisionApproval, When I `POST /claims/{id}/reassign` with `{ newOfficerId, reason }`, Then assignee changes and one Internal entry records from, to, reason, who. Given a Pending* claim, Then the proposal is auto-withdrawn, the claim returns to UnderReview (or Approved, T2B), and the entry records the auto-withdrawal (BR-37).
+- Given no reason (under 10 chars), Then 400; given any status outside the three above, Then 409 `invalid-transition` (Refused). The previous maker may check a later proposal by someone else (BR-37). The claim stays assigned and never re-enters the Submitted "oldest unassigned" view (BR-76).
+- Idempotency: Given I reassigned with k1, When resent with k1, Then the same response plus replay header, one reassignment entry and one auto-withdrawal record, no second owner change (BR-82, BR-37). Given no reason (400, nothing written), Then not stored (BR-86). Different newOfficerId or reason with k1 gives 422 `idempotency-key-reused` (BR-83). Missing or malformed key gives 400 (BR-79).
+- Rules: BR-10, BR-27, BR-32, BR-37, BR-76, BR-79 to BR-87. Touches: CS `POST /claims/{id}/reassign` (ARCHITECTURE section 9; Staff policy); FE claim detail.
 
 **US-02 See my claims** (SHOULD, T2A): As a claimant, I want a list of my claims with status, so that I can open them. Given I own 2 claims, Then I see exactly those 2; another claimant's id gives 403/404. Rules: BR-12. Touches: CS `GET /claims/mine`; FE list. (Cut: merge into US-03 screen.)
 
@@ -270,6 +288,8 @@ Business analyst (BR-74 to BR-77 and edits to BR-04/06/08/10/28):
 - "Oldest unassigned" = Submitted with no assignee, age from submittedAt in calendar time, sorted by submittedAt then claim number, never re-entered by reassignment or auto-withdraw (US-13, US-12).
 - Outstanding = every non-Rejected, non-Settled claim counted once under its own status; Pending* are separate rows; optional "awaiting checker" subtotal (US-13).
 - Accepted assumptions: auto-withdraw on reassignment (BR-37); claimant sees only "Decision under review" after a send-back (BR-33); checker confirms or sends back, never edits (BR-34); excess is one fixed amount per policy (BR-19).
+Product owner (answers to Claims SPEC Q8/Q9): the claimant claim summary shows `approvedAmount` once the checker has confirmed approval (US-05 "approved for {currency amount}"), and, while InfoRequested, the open question and its due date (US-04/07); both are already Public. Nothing about a pending proposal, payable before approval or Internal data. `GET /claims/reference-data` is COULD and cut first. Minimum Claims slice if time is short: US-01, 03, 06, 09, 18, 20, 26 to 29 via POST /claims, GET /claims/{id}, GET /claims/{id}/timeline, GET /claims, assign, assessed-amount, decision-proposals, confirm, send-back; defer in order: reference-data, corrections, settlement stubs, withdraw (US-31), reassign (US-12), info-requests/responses (US-07/04), /claims/mine (US-02).
+Human (2026-10-28, final): role-policy 403s are logged only (one security log event), not trailed and not stored; BR-04 covers resource-rule refusals only. An in-flight duplicate gets 409 `idempotency-request-in-progress` with `Retry-After: 1`. Idempotency also covers `POST /claims/{id}/corrections` and the settlement stubs. Officer "release" = hand to a named officer, never unassign; Manager may reassign any claim, Officer only as current assignee. Routes: `POST /claims/{id}/assessed-amount`, `POST /claims/{id}/reassign {newOfficerId, reason}` (ARCHITECTURE section 9).
 Human: Finance is one service with three modules (Phase 2); payee details live in Finance only, with write-only correction; dev JWT signing is RS256; top-ups have no maker-checker (documented gap, US-42).
 Product owner (scope): only Tier 1 is committed for the 5h cap and the demo ends at confirmed Approved/Rejected; Tier 2B is "designed, not built" (the P1/P2 boundary is settled in TASKS and ARCHITECTURE section 0). US-13/14 stay in Tier 1 as plain tables because the brief asks for them. "Real-time" means visible within 10 seconds (SSE or polling, Tier 3). Team performance (US-11) is visible to officers and managers. Earlier human settlements: manager reassigns; settlement excluded from handling time; amounts net of excess; refused attempts trailed Internal; 14-day deadline and six reject codes; maker-checker scope and roles; Settling state.
 
@@ -290,7 +310,7 @@ BE = `ChubbBackEnd/docs/planning/TASKS.md` (section number); FE = `ChubbFrontEnd
 | US-09 | 4.2 timeline (staff), manager opens any claim | 4 Claim detail full trail; 5 Manager claim trail view; 2 shared component |
 | US-10 | 6 `GET /staff/workload` | 4 My workload |
 | US-11 | 6 Team performance (COULD) | 4 Team table |
-| US-12 | 4.3 reassign; 4.4 reassign endpoint | 4 Release/reassign; 5 Reassign a claim |
+| US-12 | 4.3 reassign; 4.4 `POST /claims/{id}/reassign` | 4 Hand over to a named officer; 5 Reassign a claim |
 | US-13 | 6 `GET /dashboard/outstanding` (BR-76/77) | 5 Outstanding claims dashboard |
 | US-14 | 6 `GET /dashboard/exposure` | 5 Liability exposure |
 | US-16 | 6 Team performance/time in status (COULD) | 5 Charts, turnaround, time in status |
@@ -301,7 +321,7 @@ BE = `ChubbBackEnd/docs/planning/TASKS.md` (section number); FE = `ChubbFrontEnd
 | US-23 | 3 Identity, Gateway | 2 Auth service, guards, lazy areas |
 | US-24 | 5 Kafka and contracts; 4.5 Outbox; 6 idempotent consumer | n/a (backend only) |
 | US-25 | 1 scaffold and README; 9 Local run | 2 Scaffold, API client; 6 README, Playwright smoke |
-| US-26 | 4.1 Assessed amount; 4.4 set assessed | 4 Assess |
+| US-26 | 4.1 Assessed amount; 4.4 `POST /claims/{id}/assessed-amount` | 4 Assess |
 | US-27 | 4.3 Propose decision; 4.4 `decision-proposals` | 4 Propose decision form |
 | US-28 | 4.3 Confirm, maker cannot check; 4.4 `confirm` | 5 Pending-approval queue (Confirm) |
 | US-29 | 4.3 Send back; 4.4 `send-back` | 5 Pending-approval queue (Send back) |

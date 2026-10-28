@@ -1,0 +1,26 @@
+  notification:
+    build:
+      context: .
+      dockerfile: src/Notification/Dockerfile
+    <<: *hardening
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      # Built from the same variable that creates the role, so the two cannot drift apart.
+      ConnectionStrings__NotificationDb: Host=postgres;Port=5432;Database=notification_db;Username=notification;Password=${NOTIFICATION_DB_PASSWORD:-dev-only-notification-db}
+      Jwt__Issuer: ${Jwt__Issuer:-chubb-identity}
+      Jwt__Audience: ${Jwt__Audience:-chubb-claims-api}
+      Jwt__PublicKeyPath: ${Jwt__PublicKeyPath:-/run/jwt-public/public.pem}
+      Kafka__BootstrapServers: ${Kafka__BootstrapServers:-kafka:9092}
+    # No published port: only the gateway (edge) and postgres (data) can reach it.
+    networks: [edge, data]
+    depends_on:
+      jwt-keys:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    volumes:
+      - jwt-public:/run/jwt-public:ro
+    healthcheck: *dotnet-healthcheck
+    restart: unless-stopped

@@ -4,7 +4,20 @@ Owner: Product Owner. Master list: `../Assessment/AssessmentTasks.md`. Frontend 
 Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain/business-rules.md`, `docs/architecture/ARCHITECTURE.md` (section 0 phase boundary, section 11 cut line), `docs/architecture/MODULES.md`, `docs/security/SECURITY-REQUIREMENTS.md`, `docs/adr/`.
 
 **Format:** `- [ ] [PRIORITY][PHASE] task - stories; rules`. Priority: MUST / SHOULD / COULD. Phase: **P1** = built within the 5h cap, **P2** = designed, not built (kept visible in the architecture as an enhancement).
-**Only the ADR items are ticked (the files exist); everything else is unticked.**
+**Ticked = verified on disk (ADR files; slice 1: scaffold, Identity, Gateway, aggregated OpenAPI, Gateway idempotency-header CORS, health/Swagger). Everything else is unticked. Last reconciled 2026-10-28.**
+
+## Phase 1 focus and build order (human decision, 2026-10-28)
+**Phase 1 focus (all required by the assessment; none may be silently dropped):**
+- Claims: domain; persistence WITH DB-level append-only hardening (triggers, REVOKE, composite FKs, extra CHECKs); API demo-path routes; Claims in compose.
+- Kafka outbox publisher (+ Kafka and topic init in compose, publisher health check).
+- Reporting service: outstanding, exposure, pending-approvals first; workload last.
+- Notification service: idempotent consumer, claimant inbox first; manager alert after.
+
+**Build order:** 1 Claims domain > 2 Claims persistence incl. hardening > 3 Claims API demo-path routes + compose > 4 Kafka publisher > 5 Reporting > 6 Notification. The frontend starts after step 3 and runs alongside steps 4 to 6 (two agents at a time, memory limit).
+
+**Deferred within Claims (after the focus above; specs exist):** withdraw, reassign, corrections, info-requests/info-responses, `/claims/mine`, reference-data, settlement stubs. Finance stays Phase 2 (designed, not built).
+
+**Honest status:** the 1-hour backend budget is withdrawn because the scope cannot fit. The 5h cap is exceeded in practice. If anything is cut, the gap MUST be disclosed in the README and walkthrough (no silent drops). Where this section and the cut order below differ on deferred Claims items, this section wins for sequencing; priorities of existing tasks are unchanged.
 
 ## Phase boundary (settled)
 - **P1 (build):** Gateway, Identity, Claims (9-state machine, claim progress trail, maker-checker on the DECISION, refused attempts trailed, reassignment), Reporting, Notification. Demo ends at Approved or Rejected. Finance is NOT in docker-compose.
@@ -15,7 +28,7 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 - Realistic 5h stretch beyond T1: US-07, US-04 (info request and answer) and US-22 (refused attempts), because they enrich the trail.
 
 ## 1. Setup, docs, ADRs
-- [ ] [MUST][P1] Solution scaffold: Gateway, Identity, Claims, Reporting, Notification, Contracts, tests (Finance project NOT created) - US-25; BR-01
+- [x] [MUST][P1] Solution scaffold: Gateway, Identity, Claims, Reporting, Notification, Contracts, tests (Finance project NOT created) - US-25; BR-01 (verified: sln, src/* and tests/* on disk; Claims, Reporting, Notification are minimal hosts)
 - [ ] [MUST][P1] SPEC.md (from `docs/specs/SPEC-TEMPLATE.md`) written and architect-REVIEWED before coding each module/feature - process, no story
 - [ ] [MUST][P1] Small conventional commits from the start (history is graded) - process, no story
 - [ ] [MUST][P1] AI journal `docs/journal/AI-JOURNAL.md`, updated after each phase - process, no story
@@ -35,7 +48,7 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 ## 2. Security gate (applies to every slice)
 - [ ] [MUST][P1] `architect`: threat model and authorisation matrix in `docs/security/SECURITY-REQUIREMENTS.md` confirmed before Claims is built - US-20; BR-02, BR-11
 - [ ] [MUST][P1] `devops-engineer`: `scripts/security-check.sh` (gitleaks, dependency audit, image scan, format) exits 0 before each slice is accepted - US-20
-- [ ] [MUST][P1] `qa-test-engineer`: security tests S1 to S16 implemented (see section 8) - US-20, 27 to 29; BR-02, BR-32
+- [ ] [MUST][P1] `qa-test-engineer`: security tests S1 to S16 and S32 to S35 implemented (see section 8) - US-20, 27 to 29; BR-02, BR-32
 - [ ] [MUST][P1] Named authorisation policy on every endpoint, default deny; actor and role from the token only - US-20; BR-11
 - [ ] [MUST][P1] No bank details stored or accepted anywhere in Phase 1 (nothing to mask yet) - BR-42
 - [ ] [SHOULD][P1] Pre-commit hook or CI step runs the security check - no story
@@ -43,11 +56,13 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 - [ ] [COULD][P2] Security tests S17 to S31 (Finance and settlement) written alongside Phase 2 - US-32 to 45, 48; BR-42 to BR-72
 
 ## 3. Identity and Gateway
-- [ ] [MUST][P1] Identity: seeded users per role (incl. a second claimant and a second officer for S2, S4, S10) plus one user holding Officer AND Manager (demos BR-32), dev login issuing RS256 JWT - US-23; BR-02, BR-32
-- [ ] [MUST][P1] Gateway (YARP): routes for Identity, Claims, Reporting, Notification; JWT validation (signature, issuer, audience, expiry), CORS - US-23, 20; BR-02
-- [ ] [MUST][P1] Aggregated OpenAPI from the Gateway for frontend client generation - US-25 (ADR-003)
+- [x] [MUST][P1] Identity: seeded users per role (incl. a second claimant and a second officer for S2, S4, S10) plus one user holding Officer AND Manager (demos BR-32), dev login issuing RS256 JWT - US-23; BR-02, BR-32
+- [x] [MUST][P1] Gateway (YARP): routes for Identity, Claims, Reporting, Notification; JWT validation (signature, issuer, audience, expiry), CORS - US-23, 20; BR-02 (verified: 47 Gateway tests; Claims has no downstream yet, `/claims` returns 502)
+- [x] [MUST][P1] Aggregated OpenAPI from the Gateway for frontend client generation - US-25 (ADR-003) (aggregator built and tested; currently lists only `/auth/token`; re-check when Claims contract lands)
+- [x] [MUST][P1] Gateway CORS allows request header `Idempotency-Key`, exposes `Idempotent-Replayed`, and the proxy forwards `Idempotency-Key` to Claims (header allowlist) - US-01, 06, 26 to 29, 31, 12, 07, 04; BR-79, BR-82 (verified: `CorsSetup.cs`, `ProxyTransforms.cs`, `GatewayEdgeTests` preflight test)
+- [ ] [MUST][P1] Gateway CORS: `Access-Control-Expose-Headers` lists `Idempotent-Replayed`, `Retry-After` and `Location` (so the browser client can read the replay flag, the 409 in-progress back-off and the 201 Location); extend `CorsSetup.cs` and the `GatewayEdgeTests` CORS test - US-01, 06, 26 to 29; BR-82, BR-85
 - [ ] [SHOULD][P1] CorrelationId propagated across HTTP and Kafka headers and written to trail entries - US-18; BR-05
-- [ ] [SHOULD][P1] Health endpoints, Swagger UI - no story
+- [x] [SHOULD][P1] Health endpoints, Swagger UI - no story (journal 2026-10-28: health 200 and `/swagger/` 200 on the running stack)
 - [ ] [COULD][P2] Gateway routes `/payments`, `/funds`, `/ledger` present but commented out; internal reserve endpoint not exposed - US-32 to 45; BR-61
 
 ## 4. Claims service
@@ -56,7 +71,7 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 - [ ] [MUST][P1] State machine in Domain with all 9 states (Submitted, UnderReview, InfoRequested, PendingDecisionApproval, Approved, Rejected, PendingSettlementApproval, Settling, Settled); invalid transitions rejected (409/422) - US-01 to 06, 27 to 29; BR-01, BR-03
 - [ ] [MUST][P1] Settlement transitions present in the table but gated by `Settlement:Enabled=false` returning 409 `phase-2-not-enabled`; unit test proves it - US-35 to 37 (P2); BR-01, BR-20
 - [ ] [MUST][P1] Claim number `CLM-{MKT}-{YYYY}-{NNNNNN}`, claim currency from policy market, six markets - US-01; BR-23, BR-25
-- [ ] [MUST][P1] Assessed amount command: sets assessed, derives net payable = max(assessed - excess, 0) and reserve, one Internal entry - US-26; BR-19, BR-21, BR-22, BR-36
+- [ ] [MUST][P1] `POST /claims/{id}/assessed-amount` `{ assessedAmount, note }` (Officer policy, assigned officer, UnderReview): sets assessed, derives net payable = min(max(assessed - excess, 0), remaining coverage limit) per BR-19 (Phase 1 remaining = limit minus payables of other Approved claims on the policy) and reserve; one Internal entry (reserveBefore/After inside it, no separate reserve entry); 200 with claim summary. Related: reject may be proposed without an assessed amount, approve needs one (422 `assessed-amount-required`) and payable above 0 (422 `payable-zero`) - US-26; BR-19, BR-21, BR-22, BR-36
 - [ ] [MUST][P1] Reserve rules: reserve = estimate on submit, = payable on assessment and approval, 0 on rejection; no change while a proposal is pending - US-26 to 28; BR-22, BR-35
 - [ ] [MUST][P1] EF migrations auto-applied; seed policies (excess, limit, holder) and about 30 claims across markets and statuses - US-25; BR-23
 - [ ] [MUST][P1] Indexes on (status, market), assignee, createdAt; `rowVersion` optimistic concurrency - US-06, 28; BR-26, BR-38
@@ -64,37 +79,53 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 ### 4.2 Claim progress trail (centrepiece)
 - [ ] [MUST][P1] Append-only `claim_history`: id, claimId, occurredAt (server UTC), eventType, from/to status, actorId, actorRole, summary, reason, visibility Public|Internal, proposalId, correlationId - US-18; BR-04, BR-05, BR-39
 - [ ] [MUST][P1] Entry, state change and outbox row written in ONE transaction; forced failure leaves none of the three - US-18; BR-07
-- [ ] [MUST][P1] Immutability: no update or delete through API; DB role INSERT+SELECT only with trigger blocking UPDATE/DELETE; fix by `Correction` entry: Internal only, assigned officer or any Manager (else 403 + Refused entry), reason min 10 chars and exactly one referenced entry id, no state or money change - US-18, 22; BR-06, BR-74
-- [ ] [MUST][P1] Exactly one entry per business action in BR-04 (submitted, assigned, reassigned, info events, assessed, proposed, confirmed, sent back, withdrawn, refused) - US-18; BR-04
+- [ ] [MUST][P1] Immutability: no update or delete through API; DB role INSERT+SELECT only with trigger blocking UPDATE/DELETE; fix by `Correction` entry: Internal only, assigned officer or any Manager (non-assigned officer: 403 `not-assigned-officer` + Refused entry; Claimant/System: role-policy 403, log only), reason min 10 chars and exactly one referenced entry id, no state or money change - US-18, 22; BR-06, BR-74
+- [ ] [MUST][P1] Entry counts (decision log 15): one primary entry per action plus at most one Public companion; first decision proposal +2 (Internal + Public "Decision under review"), confirm +2, send-back +1 (Internal only), withdraw +1, re-proposal +1 (Internal only), all else +1; claimant DTO/list masks PendingDecisionApproval as UnderReview (BR-33); tests assert these counts - US-18, 27 to 29, 03; BR-04, BR-08, BR-33
+- [ ] [MUST][P1] Exactly one primary entry per business action in BR-04 (submitted, assigned, reassigned, info events, assessed, proposed, confirmed, sent back, withdrawn, refused) - US-18; BR-04
 - [ ] [MUST][P1] Submission writes the single Public entry "Claim received: {claimNumber}", actor Claimant from the token - US-01, 03; BR-04, BR-75
 - [ ] [MUST][P1] `GET /claims/{id}/timeline`: claimant sees own claim, Public only, no Internal entry, count, gap or id; officer and manager see Public + Internal marked as such - US-03, 09, 20; BR-08, BR-09, BR-12
 - [ ] [MUST][P1] Claimant masking while a decision is pending and after a send-back: only "Decision under review" - US-03, 29; BR-33
 - [ ] [MUST][P1] Claimant final entries: rejection code and text; approval "approved for {currency amount}" - US-03, 05; BR-08, BR-17
 - [ ] [MUST][P1] Manager can open any claim and read the full trail (replaces old manager detail gap) - US-09; BR-02, BR-12
-- [ ] [SHOULD][P1] Refused attempts: wrong-state, maker-cannot-check, lost race each write exactly one Internal "Refused" entry naming actor and attempt; unauthenticated calls write nothing - US-22; BR-01, BR-04, BR-32, BR-38
+- [ ] [SHOULD][P1] Refused attempts (resource rules only): wrong-state, not-assigned-officer, maker-cannot-check, lost race each write exactly one Internal "Refused" entry naming actor and attempt. Role-policy 403s (wrong role for the route) are logged only: one security log event, no trail entry, no stored idempotency record (human decision). Unauthenticated calls write nothing - US-22; BR-01, BR-04, BR-32, BR-38
+- [ ] [MUST][P1] Structured security log event for every role-policy 403 and every claimant-ownership 404 (actor, role, route, claimId if any, correlationId, outcome; no body, no key) - US-20, 22, 28; BR-02, BR-04
 - [ ] [SHOULD][P1] Reject reasons from the six-code list plus free text (min 10 chars) recorded in the trail - US-27; BR-10, BR-17
 ### 4.3 Maker-checker on the DECISION (domain-enforced)
-- [ ] [MUST][P1] Propose decision (approve or reject) with rationale: UnderReview to PendingDecisionApproval; Internal entry (outcome, amount, rationale, makerId, proposalId) plus Public "Decision under review"; 422 on bad code, payable 0, no assessed amount, over-estimate without justification - US-27; BR-10, BR-17 to BR-19, BR-21, BR-33, BR-35, BR-36
+- [ ] [MUST][P1] Propose decision (approve or reject) with rationale: UnderReview to PendingDecisionApproval; Internal entry (outcome, amount, rationale, makerId, proposalId) plus Public "Decision under review" on the FIRST proposal only (+2; re-proposals +1 Internal only); reject allowed without assessed amount; 422 on bad code, payable 0, approve without assessed amount (`assessed-amount-required`), over-estimate without justification - US-27; BR-10, BR-17 to BR-19, BR-21, BR-33, BR-35, BR-36
 - [ ] [MUST][P1] Confirm: manager who is not the maker; applies exactly as proposed (payload carries only `proposalId`); Approved (reserve = payable) or Rejected (reserve 0); entry names makerId and checkerId - US-28; BR-22, BR-31, BR-32, BR-34, BR-38, BR-39
 - [ ] [MUST][P1] Maker can never check own proposal, even with both roles (403 `maker-cannot-check`); Officer-only gets 403; concurrent confirms yield one success, one 409 - US-28; BR-32, BR-38
-- [ ] [MUST][P1] Send back with reason (min 10 chars): back to UnderReview, assignee unchanged, reserve unchanged - US-29; BR-10, BR-34, BR-35, BR-39
+- [ ] [MUST][P1] Send back with reason (min 10 chars): back to UnderReview, assignee unchanged, reserve unchanged; +1 Internal entry, no Public companion - US-29; BR-10, BR-34, BR-35, BR-39
 - [ ] [SHOULD][P1] Withdraw by the maker with reason; non-maker 403; confirm winning the race gives 409 - US-31; BR-02, BR-10, BR-36, BR-38
-- [ ] [SHOULD][P1] Manager reassign with reason (also officer release); pending proposal auto-withdrawn and recorded; previous maker may check a later proposal by someone else - US-12; BR-10, BR-27, BR-32, BR-37
+- [ ] [SHOULD][P1] `POST /claims/{id}/reassign` `{ newOfficerId, reason }` (Staff policy): Manager may reassign a claim in UnderReview, InfoRequested or PendingDecisionApproval only (any other status: 409 `invalid-transition` + Refused entry; Approved/PendingSettlementApproval join in Phase 2), Officer only as current assignee; "release" = hand to a named officer, never unassign or back to Submitted; `newOfficerId` known and different (else 422 `unknown-officer`); pending proposal auto-withdrawn and recorded; previous maker may check a later proposal by someone else - US-12; BR-10, BR-27, BR-32, BR-37, BR-76
 - [ ] [MUST][P1] Guard rules while Pending*: no info request, assessment or edit; stale `proposalId` gives 409 - US-27, 28; BR-15, BR-36
 ### 4.4 Endpoints (via Gateway)
 - [ ] [MUST][P1] Claimant: `POST /claims` (US-01), `GET /claims/{id}` + timeline (US-03) - BR-04, BR-12, BR-25
 - [ ] [SHOULD][P1] Claimant: `GET /claims/mine` (US-02), `POST /claims/{id}/info-responses` (US-04) - BR-12, BR-13 to BR-15
 - [ ] [MUST][P1] Officer: `GET /claims` (filters market/type/status/assignee, paged), `POST /claims/{id}/assign` concurrency-safe (409 on conflict) - US-06; BR-01, BR-02, BR-26
 - [ ] [SHOULD][P1] Officer: `POST /claims/{id}/info-requests` (due date = +14 days; one open request) - US-07; BR-13 to BR-16
-- [ ] [MUST][P1] Officer: set assessed amount; `POST /claims/{id}/decision-proposals` - US-26, 27; BR-19, BR-21
+- [ ] [MUST][P1] Officer: `POST /claims/{id}/assessed-amount`; `POST /claims/{id}/decision-proposals` - US-26, 27; BR-19, BR-21
 - [ ] [MUST][P1] Manager: `POST /claims/{id}/decision-proposals/{pid}/confirm` and `.../send-back` - US-28, 29; BR-31 to BR-34
-- [ ] [SHOULD][P1] Maker: `.../withdraw`; manager/officer reassign endpoint - US-31, 12; BR-27, BR-37
+- [ ] [SHOULD][P1] Maker: `POST /claims/{id}/decision-proposals/{pid}/withdraw`; Staff: `POST /claims/{id}/reassign` - US-31, 12; BR-27, BR-37
+- [ ] [SHOULD][P1] Staff: `POST /claims/{id}/corrections` `{ referencedEntryId, reason, correctedStatement }`; settlement stub routes `.../settlement-proposals...` (409 `phase-2-not-enabled`, Refused, idempotent) - US-18, 22; BR-74
 - [ ] [MUST][P1] REMOVED: single-actor `/decision` and `/settle` endpoints must not exist; settlement routes return 409 `phase-2-not-enabled` - US-27, 28; BR-31
 - [ ] [MUST][P1] Request DTOs expose only client-settable fields (never status, assignee, reserve, approved amount, makerId, checkerId) - US-20; BR-11, BR-34
-- [ ] [SHOULD][P1] Reference-data endpoint (markets, currencies, claim types, reject codes) - US-01, 27; BR-17, BR-23 (COULD if short)
+- [ ] [COULD][P1] `GET /claims/reference-data` (markets, currencies, claim types, reject codes); cut first, the frontend may hardcode the lists - US-01, 27; BR-17, BR-23 (PO decision: COULD)
+- [ ] [MUST][P1] Claimant claim summary includes `approvedAmount` (only once Approved, confirmed) and `openInformationRequest.question` + due date (only while InfoRequested); never the proposal, outcome while pending, payable before approval, or any Internal field; status masked per BR-33 - US-05, 04, 03; BR-08, BR-33 (PO answer to SPEC Q8)
+- [ ] [MUST][P1] Minimum demoable Claims slice (cut line, PO): routes `POST /claims`, `GET /claims/{id}`, `GET /claims/{id}/timeline`, `GET /claims` (+ `/mine` merged into it if short), `POST /claims/{id}/assign`, `/assessed-amount`, `/decision-proposals`, `.../confirm`, `.../send-back`, with idempotency, the trail, role/ownership rules and the security log. Defer in this order: reference-data, corrections route, settlement stubs (keep only the flag), withdraw, reassign, info-requests/info-responses, `/claims/mine` - US-01, 03, 06, 09, 18, 20, 26 to 29
 ### 4.5 Outbox
 - [ ] [MUST][P1] Transactional outbox plus publisher background service; publishes every Phase 1 event incl. `ClaimAssessed` and `ClaimApproved` with `payable`, `currency`, `proposalId` - US-24, 18; BR-07
 - [ ] [COULD][P2] Claims consumer for `finance.events` (reusing `processed_events` and DLQ plumbing) enabling Settling and Settled - US-37; BR-45, BR-48
+
+### 4.6 Idempotent commands (BR-79 to BR-87; scope, every non-GET Claims route: POST /claims, assign, assessed-amount, decision-proposals, confirm, send-back, withdraw, reassign, info-requests, info-responses, corrections, and the settlement stubs)
+- [ ] [MUST][P1] Idempotency store: table keyed by (actorId, method + route with resolved ids, key) with fingerprint (SHA-256 of method, route, raw body), status, body, Content-Type, Location, createdAt, expiresAt; unique index on the scope - US-01, 06, 26 to 29; BR-80, BR-81
+- [ ] [MUST][P1] Middleware/endpoint filter on every non-GET Claims route (twelve command routes incl. corrections and settlement stubs): key mandatory, 8 to 128 chars `A-Za-z0-9-_` else 400 `idempotency-key-missing` / `idempotency-key-invalid` (no trail entry); authentication and role policy checked before key and lookup (Officer-only confirm without a key gets 403, not 400) - US-01 and all command stories; BR-79, BR-82
+- [ ] [MUST][P1] One transaction: idempotency record + state change + trail entry + outbox row commit together; on failure none survive and a retry executes as new - US-18, 27, 28; BR-84, BR-07
+- [ ] [MUST][P1] Replay: same scope and fingerprint returns stored status, body, Content-Type, Location with `Idempotent-Replayed: true`; handler not run, no second trail entry or outbox row, no second claim number - US-01, 28; BR-82, BR-25
+- [ ] [MUST][P1] Payload mismatch: same scope, different fingerprint gives 422 `idempotency-key-reused`; nothing executed or written; original response not revealed - US-26; BR-83
+- [ ] [MUST][P1] Concurrent same key: exactly one executes; the other gets 409 `idempotency-request-in-progress` with `Retry-After: 1` (no waiting, not stored, writes nothing, no security event); different keys still follow BR-38 (loser gets 409 plus Refused entry) - US-06, 28; BR-85, BR-38
+- [ ] [MUST][P1] Stored-refusal rule: store a response iff the command committed something (2xx or a resource-rule refusal that wrote a Refused entry); never store 400, 401, 404, role-policy 403, 409 in-progress, 422 key-reused, trail-less 422 or 5xx; replay of a stored refusal writes no second Refused entry (human decision settled; BR-04/BR-86 aligned) - US-28, 31, 22; BR-86, BR-04
+- [ ] [MUST][P1] Retention 24 hours enforced on lookup (expired record ignored); stored bodies never logged, same access rules as the claim - US-04; BR-87, BR-81
+- [ ] [COULD][P1] Cleanup background job deleting expired idempotency records (correctness does not depend on it) - no story; BR-87
 
 ## 5. Kafka and contracts
 - [ ] [MUST][P1] Topics `claims.events` (key = claimId) and `claims.events.dlq`; topic init in compose - US-24; ADR-004
@@ -125,7 +156,7 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 - [ ] [MUST][P1] API integration tests (Testcontainers): role authorisation, concurrent pick-up, concurrent confirms - US-06, 28; BR-26, BR-38
 - [ ] [MUST][P1] S1 token invalid/expired/wrong audience (401) - US-20
 - [ ] [MUST][P1] S2 claimant A reads claimant B's claim (403/404) - US-02, 20; BR-12
-- [ ] [MUST][P1] S3 wrong-role endpoint calls (403) - US-20; BR-02
+- [ ] [MUST][P1] S3 wrong-role endpoint calls (claimant on officer routes, officer on claimant routes, non-manager on dashboards): 403, trail entry count unchanged, no idempotency record, one security log event per call - US-20; BR-02, BR-04
 - [ ] [MUST][P1] S4 non-assigned officer decides (403/409) - US-26, 27; BR-02
 - [ ] [MUST][P1] S5 server-owned fields in body ignored/400 - US-20; BR-11
 - [ ] [MUST][P1] S6 RFC 7807, no stack trace, no PII in logs - no story
@@ -134,12 +165,24 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 - [ ] [MUST][P1] S9 invalid transitions 409/422 - US-27, 28; BR-01
 - [ ] [MUST][P1] S10 concurrent pick-up one 200 one 409 - US-06; BR-26
 - [ ] [MUST][P1] S11 dual-role user confirms own proposal: 403 `maker-cannot-check`, 403, no state change (Refused entry once US-22 is built) - US-28, 22; BR-32
-- [ ] [MUST][P1] S12 Officer-only confirm/send-back 403 - US-28, 29; BR-02
+- [ ] [MUST][P1] S12 Officer-only confirm/send-back: 403 (also without a key), unchanged trail, no idempotency record, exactly one security log event per call, no replay header on a repeat - US-28, 29; BR-02, BR-04, BR-86
 - [ ] [MUST][P1] S13 non-assigned officer proposes/withdraws; non-maker withdraws 403 - US-27, 31; BR-02
 - [ ] [MUST][P1] S13b claimant timeline during pending and after send-back - US-03, 29; BR-33
 - [ ] [MUST][P1] S14 stale `proposalId` confirm 409 - US-28; BR-38, BR-39
 - [ ] [MUST][P1] S15 simultaneous confirms / confirm vs withdraw: one wins - US-28, 31; BR-38
 - [ ] [MUST][P1] S16 confirm request with amount/outcome ignored - US-28; BR-34
+- [ ] [MUST][P1] I1 replay returns identical status and body plus `Idempotent-Replayed: true`; trail entry count, outbox row count and status unchanged; claim number sequence advanced once - US-01, 28; BR-82
+- [ ] [MUST][P1] I2 same key, different payload gives 422 `idempotency-key-reused`, state unchanged (assessed 7,500 then 8,000) - US-26; BR-83
+- [ ] [MUST][P1] I3 concurrent same key: hold the first request in flight, the same key again gets 409 `idempotency-request-in-progress` with `Retry-After: 1` (not stored, zero Refused entries); after release one transition entry and the resend is a replay of the 200; different keys: one 200, one 409, one Refused entry - US-28; BR-85, BR-38
+- [ ] [MUST][P1] I4 missing key, 7 chars, 129 chars, key with a space each give 400 and the entry count is unchanged - US-01, 06; BR-79
+- [ ] [MUST][P1] I5 other actor cannot replay: same key from another actor executes as its own and never receives the stored response - US-04, 28; BR-80, BR-12
+- [ ] [MUST][P1] I6 expired record (expiresAt in the past) is not replayed; same key executes as new - US-01; BR-87
+- [ ] [MUST][P1] I7 5xx not stored: forced failure after the trail insert leaves no record, entry or outbox row; retry with same key succeeds once - US-18; BR-84, BR-86
+- [ ] [MUST][P1] I8 stored refusal: maker confirms own proposal twice with k1 gives two 403 (second with replay header) and exactly one Refused entry; propose without reason with k2 gives 400, then a valid body with k2 succeeds - US-28, 27; BR-86, BR-32
+- [ ] [MUST][P1] S32 idempotency coverage: startup/reflection test over the endpoint data source (every non-GET Claims endpoint has idempotency metadata and a named policy); one keyless non-GET command gets 400 `idempotency-key-missing`, entry count unchanged - US-20; BR-79
+- [ ] [MUST][P1] S33 cross-actor replay: officer A commits with k1; officer B and the dual-role user send k1 with identical bytes on the same route; claimant B sends claimant A's key on A's info-response route. B executes as B and never receives A's body; claimant B gets 404; A's record unchanged - US-20, 04; BR-80, BR-12
+- [ ] [MUST][P1] S34 stored response hygiene: answer text and keys appear in no log line; 422 `idempotency-key-reused` body holds no stored content; record with expires_at in the past is not replayed - US-20, 04; BR-81, BR-83, BR-87
+- [ ] [MUST][P1] S35 replay with expired or missing token: 401 before any lookup, no `Idempotent-Replayed` header - US-20; BR-82
 - [ ] [SHOULD][P1] Consumer idempotency test; Kafka/outbox/DLQ Testcontainers test - US-24; BR-07
 - [ ] [COULD][P1] End-to-end smoke across services - US-25
 - [ ] [COULD][P2] S17 to S31 and Finance unit tests (payment states, balanced journal, idempotent posting) - US-32 to 45, 48; BR-42 to BR-72
@@ -154,7 +197,7 @@ Sources of truth (not edited here): `docs/product/user-stories.md`, `docs/domain
 - [ ] [MUST][P1] Demo script (under 5 min): claimant submits; officer picks up, assesses, proposes approve; claimant sees only "Decision under review"; dual-role user confirms own proposal and gets 403; manager sends back; officer re-proposes; manager confirms; claimant sees "approved"; officer sees full trail with maker and checker; manager dashboards update. Ends at Approved - US-01, 03, 06, 09, 13, 14, 26 to 29
 - [ ] [MUST][P1] Be ready to justify: why services for this size, why Kafka for these events, trail written atomically with outbox, maker-checker in domain, concurrency-safe pick-up, exposure definition, scaling to six markets - US-18, 24, 28; BR-22, BR-32
 - [ ] [MUST][P1] Say plainly what is built (Phase 1) vs designed (Phase 2) and why Finance was deferred under the 5h cap - ARCHITECTURE section 0, 11
-- [ ] [MUST][P1] "With more time" list: Finance (F1 payment + settlement maker-checker, F2 funds/Held/top-up, F3 cancel/reversal/reconciliation), OIDC, KMS, Kafka ACLs, schema registry, CI, charts - ARCHITECTURE section 11
+- [ ] [MUST][P1] "With more time" list: Finance (F1 payment + settlement maker-checker, F2 funds/Held/top-up, F3 cancel/reversal/reconciliation), OIDC, KMS, Kafka ACLs, schema registry, CI, charts, idempotency-record cleanup job and canonical-JSON fingerprint, .NET 10 LTS upgrade (.NET 8 support ends 2026-11-10, kept deliberately; see ARCHITECTURE section 12) - ARCHITECTURE section 11
 - [ ] [SHOULD][P1] Screenshots and seeded state as fallback if Kafka fails - no story
 
 ---
