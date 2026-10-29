@@ -12,7 +12,35 @@ public sealed class ClaimQueries(ClaimsDbContext db) : IClaimQueries
 
     public async Task<PagedResult<Claim>> ListAsync(ClaimListFilter filter, CancellationToken cancellationToken)
     {
-        var matching = Filtered(filter);
+        var matching = ByColumns(Filtered(filter), filter.Columns);
+        var total = await matching.CountAsync(cancellationToken);
+        var items = await Ordered(matching, filter.Sort)
+            .Skip((filter.Page - 1) * filter.PageSize)
+            .Take(filter.PageSize)
+            .ToListAsync(cancellationToken);
+        return new PagedResult<Claim>(items, total);
+    }
+
+    public async Task<PagedResult<Claim>> ListMineAsync(MyClaimsFilter filter, CancellationToken cancellationToken)
+    {
+        var matching = Claims(filter.Columns.ClaimNumber).Where(claim => claim.ClaimantId == filter.ClaimantId);
+        matching = ByColumns(matching, filter.Columns);
+        if (filter.Market is { } market)
+        {
+            matching = matching.Where(claim => claim.Market == market);
+        }
+
+        if (filter.Type is { } type)
+        {
+            matching = matching.Where(claim => claim.Type == type);
+        }
+
+        if (filter.Status is { } shown)
+        {
+            var stored = Enum.GetValues<ClaimStatus>().Where(status => ClaimantView.StatusFor(status) == shown).ToList();
+            matching = matching.Where(claim => stored.Contains(claim.Status));
+        }
+
         var total = await matching.CountAsync(cancellationToken);
         var items = await Ordered(matching, filter.Sort)
             .Skip((filter.Page - 1) * filter.PageSize)
@@ -45,8 +73,45 @@ public sealed class ClaimQueries(ClaimsDbContext db) : IClaimQueries
             .ThenBy(claim => claim.Number)
         : claims.OrderByDescending(claim => claim.SubmittedAt).ThenBy(claim => claim.Id);
 
-    private IQueryable<Claim> Claims() =>
-        db.Set<Claim>().AsNoTracking().Include(claim => claim.Policy).Include(claim => claim.Proposals);
+    // The claim number has a value converter, which EF cannot compose with ILIKE, so the match is a SQL source.
+    // xmin is a system column and is not part of c.*, but the row version maps to it.
+    private IQueryable<Claim> Claims(string? numberContains = null)
+    {
+        var source = numberContains is null
+            ? db.Set<Claim>()
+            : db.Set<Claim>().FromSql($"SELECT c.*, c.xmin FROM claims.claims c WHERE c.claim_number ILIKE {LikeContains(numberContains)}");
+        return source.AsNoTracking().Include(claim => claim.Policy).Include(claim => claim.Proposals);
+    }
+
+    private static string LikeContains(string text) =>
+        "%" + text.Replace("\\", "\\\\").Replace("%", "\\%").Replace("_", "\\_") + "%";
+
+    private static IQueryable<Claim> ByColumns(IQueryable<Claim> claims, ClaimColumnCriteria columns)
+    {
+        if (columns.MinAmount is { } min)
+        {
+            claims = claims.Where(claim => EF.Property<decimal>(claim, "_estimated") >= min);
+        }
+
+        if (columns.MaxAmount is { } max)
+        {
+            claims = claims.Where(claim => EF.Property<decimal>(claim, "_estimated") <= max);
+        }
+
+        if (columns.SubmittedFrom is { } from)
+        {
+            var start = new DateTimeOffset(from.ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            claims = claims.Where(claim => claim.SubmittedAt >= start);
+        }
+
+        if (columns.SubmittedTo is { } to)
+        {
+            var endExclusive = new DateTimeOffset(to.AddDays(1).ToDateTime(TimeOnly.MinValue), TimeSpan.Zero);
+            claims = claims.Where(claim => claim.SubmittedAt < endExclusive);
+        }
+
+        return claims;
+    }
 
     private IQueryable<Claim> VisibleTo(Actor actor)
     {
@@ -56,7 +121,7 @@ public sealed class ClaimQueries(ClaimsDbContext db) : IClaimQueries
 
     private IQueryable<Claim> Filtered(ClaimListFilter filter)
     {
-        var claims = Claims();
+        var claims = Claims(filter.Columns.ClaimNumber);
         if (filter.Market is { } market)
         {
             claims = claims.Where(claim => claim.Market == market);

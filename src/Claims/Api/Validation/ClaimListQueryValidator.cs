@@ -14,5 +14,7 @@ public sealed class ClaimListQueryValidator : AbstractValidator<ClaimListQuery>
             .WithMessage("Must be oldest or newest.");
         RuleFor(query => query.Market!).Must(Markets.All.Contains).When(query => query.Market is not null)
             .WithMessage("Must be one of the supported markets.");
+        this.AddColumnFilterRules(
+            query => query.ClaimNumber, query => query.MinAmount, query => query.MaxAmount, query => query.SubmittedFrom, query => query.SubmittedTo);
     }
 }
