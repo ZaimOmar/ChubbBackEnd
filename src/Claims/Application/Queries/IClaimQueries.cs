@@ -12,8 +12,16 @@ public enum ClaimListSort
 public sealed record ClaimColumnCriteria(
     string? ClaimNumber, decimal? MinAmount, decimal? MaxAmount, DateOnly? SubmittedFrom, DateOnly? SubmittedTo);
 
+public static class OutstandingClaims
+{
+    /// <summary>The statuses the Reporting outstanding dashboard counts: everything except Rejected and Settled (BR-77).</summary>
+    public static readonly IReadOnlyList<ClaimStatus> Statuses = Enum.GetValues<ClaimStatus>()
+        .Where(status => status is not (ClaimStatus.Rejected or ClaimStatus.Settled))
+        .ToList();
+}
+
 public sealed record ClaimListFilter(
-    string? Market, ClaimType? Type, ClaimStatus? Status, Guid? AssigneeId, ClaimColumnCriteria Columns, int Page, int PageSize, ClaimListSort Sort);
+    string? Market, ClaimType? Type, ClaimStatus? Status, Guid? AssigneeId, ClaimColumnCriteria Columns, bool OutstandingOnly, int Page, int PageSize, ClaimListSort Sort);
 
 /// <summary>Status is the claimant-facing status, so UnderReview also matches claims awaiting a decision approval.</summary>
 public sealed record MyClaimsFilter(

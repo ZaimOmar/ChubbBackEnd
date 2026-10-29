@@ -109,6 +109,12 @@ paths:
           schema:
             type: string
             enum: [Submitted, UnderReview, InfoRequested, PendingDecisionApproval, Approved, Rejected, PendingSettlementApproval, Settling, Settled]
+        - name: outstanding
+          in: query
+          description: When true, only claims the Reporting outstanding dashboard counts (every status except Rejected and Settled). Combines with the other filters; an explicit status of Rejected or Settled is rejected with 400.
+          schema:
+            type: boolean
+            default: false
         - name: assigneeId
           in: query
           schema:

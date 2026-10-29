@@ -137,6 +137,11 @@ public sealed class ClaimQueries(ClaimsDbContext db) : IClaimQueries
             claims = claims.Where(claim => claim.Status == status);
         }
 
+        if (filter.OutstandingOnly)
+        {
+            claims = claims.Where(claim => OutstandingClaims.Statuses.Contains(claim.Status));
+        }
+
         return filter.AssigneeId is { } assignee ? claims.Where(claim => claim.AssignedOfficerId == assignee) : claims;
     }
 }
