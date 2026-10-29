@@ -1,3 +1,4 @@
+using Chubb.Claims.Application;
 using Chubb.Contracts;
 using FluentValidation;
 
@@ -14,6 +15,9 @@ public sealed class ClaimListQueryValidator : AbstractValidator<ClaimListQuery>
             .WithMessage("Must be oldest or newest.");
         RuleFor(query => query.Market!).Must(Markets.All.Contains).When(query => query.Market is not null)
             .WithMessage("Must be one of the supported markets.");
+        RuleFor(query => query.Status!.Value).Must(status => OutstandingClaims.Statuses.Contains(status))
+            .When(query => query.Outstanding && query.Status is not null).OverridePropertyName("status")
+            .WithMessage("Must be an outstanding status (not Rejected or Settled) when outstanding is true.");
         this.AddColumnFilterRules(
             query => query.ClaimNumber, query => query.MinAmount, query => query.MaxAmount, query => query.SubmittedFrom, query => query.SubmittedTo);
     }

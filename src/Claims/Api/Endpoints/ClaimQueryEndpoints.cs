@@ -19,7 +19,7 @@ public static class ClaimQueryEndpoints
     private static async Task<IResult> ListAsync(
         [AsParameters] ClaimListQuery query, IClaimQueries queries, CancellationToken ct)
     {
-        var filter = new ClaimListFilter(query.Market, query.Type, query.Status, query.AssigneeId, ColumnsOf(query), query.Page, query.PageSize, SortOf(query));
+        var filter = new ClaimListFilter(query.Market, query.Type, query.Status, query.AssigneeId, ColumnsOf(query), query.Outstanding, query.Page, query.PageSize, SortOf(query));
         var page = await queries.ListAsync(filter, ct);
         return Results.Ok(new StaffClaimPage(page.Items.Select(ClaimViews.ToStaff).ToList(), query.Page, query.PageSize, page.TotalCount));
     }
