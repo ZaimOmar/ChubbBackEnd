@@ -21,6 +21,7 @@ public static class ApiSetup
         services.AddSingleton<IValidator<ProposeDecisionRequest>, ProposeDecisionRequestValidator>();
         services.AddSingleton<IValidator<SendBackRequest>, SendBackRequestValidator>();
         services.AddSingleton<IValidator<ClaimListQuery>, ClaimListQueryValidator>();
+        services.AddSingleton<IValidator<MyClaimsQuery>, MyClaimsQueryValidator>();
         services.AddClaimsAuthorization();
         return services;
     }

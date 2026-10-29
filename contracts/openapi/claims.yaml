@@ -114,6 +114,39 @@ paths:
           schema:
             type: string
             format: uuid
+        - name: claimNumber
+          in: query
+          description: Case-insensitive contains match on the claim number, trimmed, 1 to 40 characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 40
+        - name: minAmount
+          in: query
+          description: Estimated amount, in the claim's own currency, at least this value (zero or more).
+          schema:
+            type: number
+            format: decimal
+            minimum: 0
+        - name: maxAmount
+          in: query
+          description: Estimated amount, in the claim's own currency, at most this value. Must not be below minAmount.
+          schema:
+            type: number
+            format: decimal
+            minimum: 0
+        - name: submittedFrom
+          in: query
+          description: Submitted on or after this UTC date (inclusive).
+          schema:
+            type: string
+            format: date
+        - name: submittedTo
+          in: query
+          description: Submitted on or before this UTC date (inclusive). Must not be before submittedFrom.
+          schema:
+            type: string
+            format: date
         - name: sort
           in: query
           description: Defaults to newest, or to oldest (open proposal age, then claim number) when status is PendingDecisionApproval.
@@ -140,6 +173,112 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ClaimsStaffClaimPage'
+        '400':
+          description: Bad request or validation error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '401':
+          description: Missing, expired or invalid token
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '403':
+          description: The caller's role or the claim state does not allow this
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+        '500':
+          description: Unexpected error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ClaimsProblemDetails'
+  /claims/mine:
+    get:
+      operationId: ListMyClaims
+      summary: List the caller's own claims (Claimant)
+      tags:
+        - Claims
+      parameters:
+        - name: market
+          in: query
+          schema:
+            type: string
+            enum: [SG, HK, MY, TH, ID, AU]
+        - name: type
+          in: query
+          schema:
+            type: string
+            enum: [Motor, Property]
+        - name: status
+          in: query
+          schema:
+            type: string
+            description: Claimant-facing status, as shown in the response.
+            enum: [Submitted, UnderReview, InfoRequested, Approved, Rejected, Settling, Settled]
+        - name: claimNumber
+          in: query
+          description: Case-insensitive contains match on the claim number, trimmed, 1 to 40 characters.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 40
+        - name: minAmount
+          in: query
+          description: Estimated amount, in the claim's own currency, at least this value (zero or more).
+          schema:
+            type: number
+            format: decimal
+            minimum: 0
+        - name: maxAmount
+          in: query
+          description: Estimated amount, in the claim's own currency, at most this value. Must not be below minAmount.
+          schema:
+            type: number
+            format: decimal
+            minimum: 0
+        - name: submittedFrom
+          in: query
+          description: Submitted on or after this UTC date (inclusive).
+          schema:
+            type: string
+            format: date
+        - name: submittedTo
+          in: query
+          description: Submitted on or before this UTC date (inclusive). Must not be before submittedFrom.
+          schema:
+            type: string
+            format: date
+        - name: sort
+          in: query
+          description: Defaults to newest.
+          schema:
+            type: string
+            enum: [newest, oldest]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClaimsClaimantClaimPage'
         '400':
           description: Bad request or validation error
           content:
@@ -954,6 +1093,27 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/ClaimsStaffClaimView'
+        page:
+          type: integer
+          format: int32
+        pageSize:
+          type: integer
+          format: int32
+        totalCount:
+          type: integer
+          format: int32
+    ClaimsClaimantClaimPage:
+      type: object
+      required:
+        - items
+        - page
+        - pageSize
+        - totalCount
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ClaimsClaimantClaimView'
         page:
           type: integer
           format: int32
